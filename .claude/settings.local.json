@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv:*)",
+      "Bash(\"./.venv/Scripts/python.exe\" -m pip install --upgrade pip)",
+      "Bash(\"C:/local_working_projects/falstad_stack_integration/.venv/Scripts/python.exe\" -m pip install PyQt6)",
+      "Bash(\"C:/local_working_projects/falstad_stack_integration/.venv/Scripts/python.exe\" -c:*)",
+      "Bash(\"C:/local_working_projects/falstad_stack_integration/.venv/Scripts/python.exe\" -c \"\nfrom PyQt6.QtWebEngineWidgets import QWebEngineView\nprint\\(''QWebEngineView import: OK''\\)\nprint\\(f''Class: {QWebEngineView}''\\)\n\")",
+      "Bash(\"C:/local_working_projects/falstad_stack_integration/.venv/Scripts/python.exe\" -c \"\n# Test import order - WebEngine before offscreen QApplication\ntry:\n    from PyQt6.QtWebEngineWidgets import QWebEngineView\n    print\\(''WebEngine import succeeded BEFORE QApplication''\\)\nexcept Exception as e:\n    print\\(f''WebEngine import failed: {e}''\\)\nimport os\nos.environ[''QT_QPA_PLATFORM''] = ''offscreen''\nfrom PyQt6.QtWidgets import QApplication\napp = QApplication\\([]\\)\ntry:\n    from PyQt6.QtWebEngineWidgets import QWebEngineView\n    print\\(''WebEngine import succeeded AFTER offscreen QApplication''\\)\nexcept Exception as e:\n    print\\(f''WebEngine import failed after app: {e}''\\)\n\")",
+      "Bash(\"C:/local_working_projects/falstad_stack_integration/.venv/Scripts/python.exe\" -m py_compile \"C:/local_working_projects/falstad_stack_integration/tools/question_generator.py\")"
+    ]
+  }
+}
