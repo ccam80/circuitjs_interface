@@ -45,11 +45,32 @@
 - [x] Removed old `circuitjs1/` directory (GWT 2.7.0)
 - **Lesson**: falstad.com has multiple GWT build directories — `circuitjs101/` is current, `circuitjs1/` is legacy
 
-### Current: retest with user's circuit
-- [ ] Wait ~2 min for GitHub Pages rebuild
-- [ ] Verify circuit loads on https://ccam80.github.io/circuitjs-moodle/test-bridge.html
-- [ ] Verify AC, filt, out node voltages stream to the readout
-- [ ] Proceed to STACK question creation
+### Multi-measurement support added (2026-02-15)
+- [x] `bridge.html`: added `measures=` URL parameter for label-based element extraction
+  - Supports properties: `current`, `voltageDiff`, `voltage0`, `voltage1`, `power`
+  - `labelMap` built from `onanalyze` callback, maps element labels to element objects
+  - Power computed client-side as `getVoltageDiff() * getCurrent()`
+  - Backward compatible: existing `nodes=` and `elements=` params unchanged
+- [x] `test-bridge.html`: updated to demonstrate `measures=R1:current,R1:voltageDiff,R1:power` alongside `nodes=`
+  - Readout now shows unit-appropriate suffixes (V, A, W) based on key
+- [x] `stack-question-template.txt`: expanded with 4 examples
+  - Example 1: voltage measurement (original)
+  - Example 2: current measurement via labeled element
+  - Example 3: multi-value grading (voltage + current, 2 STACK inputs, 2 PRTs)
+  - Example 4: impedance calculation (V/I computed in Maxima feedback variables)
+  - Added "Supported Measurement Properties" reference table
+- [x] `tools/question_generator.py`: fully rewritten for multi-measurement support
+  - `Measurement` dataclass: label, property, target, tolerance, graded
+  - GUI: QTableWidget replaces old single-value grading (Label, Type, Target, Tol, Grade columns)
+  - XML generation: N inputs + N PRTs, one per graded measurement, weighted equally
+  - Settings: JSON serialization with migration from old single-node format
+  - "Use Value as Target" works on currently selected table row
+
+### Current: deploy and test
+- [ ] Push changes to GitHub Pages
+- [ ] Test `measures=` parameter with a circuit that has labeled elements
+- [ ] Test question generator GUI launches and produces valid XML
+- [ ] Create first current-graded STACK question
 
 ## Architecture
 
@@ -79,7 +100,8 @@ The CircuitJS1 JS API requires **same-origin** between the calling page and the 
 | `cct` | (none) | Raw circuit text |
 | `startCircuit` | (none) | Filename from bundled circuits/ directory |
 | `nodes` | (none) | Comma-separated labeled node names to read (e.g. `vout,vmid`) |
-| `elements` | (none) | Element index:property pairs (e.g. `3:current,5:voltageDiff`) |
+| `elements` | (none) | Element index:property pairs (e.g. `3:current,5:voltageDiff`) — legacy |
+| `measures` | (none) | Label-based element measures (e.g. `R1:current,R1:power`) — preferred |
 | `rate` | `4` | postMessage events per second |
 | `editable` | `true` | Whether student can edit the circuit |
 | `whiteBackground` | `false` | White background |

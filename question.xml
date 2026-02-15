@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<quiz>
+  <question type="stack">
+    <name>
+      <text>Untitled CircuitJS1 Question</text>
+    </name>
+    <questiontext format="html">
+      <text><![CDATA[<p>Adjust the circuit as instructed.</p>
+
+<p>Targets: <strong>V_VA</strong>: {@target_ans1@} V (&plusmn; {@tol_ans1@} V), <strong>V_VB</strong>: {@target_ans2@} V (&plusmn; {@tol_ans2@} V), <strong>V_VM</strong>: {@target_ans3@} V (&plusmn; {@tol_ans3@} V)</p>
+
+<p><em>Right-click a component and choose "Edit..." to change its value. The readout updates live.</em></p>
+
+[[iframe height="640px" width="830px"]]
+<div style="font-family:sans-serif;">
+
+  <iframe id="sim-bridge"
+    src="https://ccam80.github.io/circuitjs-moodle/bridge.html?ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqKwBOINaOG71aEcnjbDo4xZC8TUs0pY8+125qV6Ng7EJGLXLt7OfjpBXj7gKHbwkOZh3PxhVpIxcRFWSXgmCGah6VniEW4pZmjk8VHixISRiSAAagCCrGWFtBl4lvjiDQCyLZDl+YnVugWCDQBCrEA&amp;nodes=VA,VB,VM&amp;editable=true&amp;rate=2&amp;whiteBackground=true"
+    width="800" height="550" style="border:1px solid #ccc;">
+  </iframe>
+
+  <div id="readout" style="font-family:monospace; padding:8px; font-size:14px;
+    background:#f4f4f4; border:1px solid #ddd; margin-top:4px;">
+    V<sub>VA</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span><br/>
+    V<sub>VB</sub> = <span id="val-ans2" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span><br/>
+    V<sub>VM</sub> = <span id="val-ans3" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span>
+    <div id="status" style="color:#999; margin-top:4px;">(waiting for simulation...)</div>
+  </div>
+
+</div>
+
+[[script type="module"]]
+import {stack_js} from '[[cors src="stackjsiframe.js"/]]';
+
+const ans1Id = await stack_js.request_access_to_input("ans1", true);
+const ans1Input = document.getElementById(ans1Id);
+const ans2Id = await stack_js.request_access_to_input("ans2", true);
+const ans2Input = document.getElementById(ans2Id);
+const ans3Id = await stack_js.request_access_to_input("ans3", true);
+const ans3Input = document.getElementById(ans3Id);
+
+window.addEventListener('message', function(event) {
+  if (!event.data || event.data.type !== 'circuitjs-data') return;
+  var v;
+
+  v = event.data.values['VA'];
+  if (v !== null && v !== undefined) document.getElementById('val-ans1').textContent = v.toFixed(4);
+  v = event.data.values['VB'];
+  if (v !== null && v !== undefined) document.getElementById('val-ans2').textContent = v.toFixed(4);
+  v = event.data.values['VM'];
+  if (v !== null && v !== undefined) document.getElementById('val-ans3').textContent = v.toFixed(4);
+
+  v = event.data.values['VA'];
+  if (v !== null && v !== undefined) {
+    ans1Input.value = v.toFixed(6);
+    ans1Input.dispatchEvent(new Event('change'));
+  }
+  v = event.data.values['VB'];
+  if (v !== null && v !== undefined) {
+    ans2Input.value = v.toFixed(6);
+    ans2Input.dispatchEvent(new Event('change'));
+  }
+  v = event.data.values['VM'];
+  if (v !== null && v !== undefined) {
+    ans3Input.value = v.toFixed(6);
+    ans3Input.dispatchEvent(new Event('change'));
+  }
+  document.getElementById('status').textContent = '(live)';
+});
+[[/script]]
+[[/iframe]]
+
+<div>
+  <p>V_VA: [[input:ans1]] V [[validation:ans1]]</p>
+</div>
+<div>
+  <p>V_VB: [[input:ans2]] V [[validation:ans2]]</p>
+</div>
+<div>
+  <p>V_VM: [[input:ans3]] V [[validation:ans3]]</p>
+</div>
+]]></text>
+    </questiontext>
+    <generalfeedback format="html">
+      <text><![CDATA[<p>V_VA: target = {@target_ans1@} V (&plusmn; {@tol_ans1@} V), measured = {@ans1@} V</p>
+<p>V_VB: target = {@target_ans2@} V (&plusmn; {@tol_ans2@} V), measured = {@ans2@} V</p>
+<p>V_VM: target = {@target_ans3@} V (&plusmn; {@tol_ans3@} V), measured = {@ans3@} V</p>
+]]></text>
+    </generalfeedback>
+    <defaultgrade>1</defaultgrade>
+    <penalty>0.1</penalty>
+    <hidden>0</hidden>
+    <plugin qtype="stack">
+      <stackversion>
+        <text/>
+      </stackversion>
+      <questionvariables>
+        <text><![CDATA[target_ans1: 7.5;
+tol_ans1: 0.01;
+target_ans2: 2.5;
+tol_ans2: 0.01;
+target_ans3: 5;
+tol_ans3: 0.01;
+]]></text>
+      </questionvariables>
+      <specificfeedback format="html">
+        <text><![CDATA[[[feedback:prt1]][[feedback:prt2]][[feedback:prt3]]]]></text>
+      </specificfeedback>
+      <questionnote format="html">
+        <text><![CDATA[V_VA={@target_ans1@}, V_VB={@target_ans2@}, V_VM={@target_ans3@}]]></text>
+      </questionnote>
+      <questiondescription format="html">
+        <text/>
+      </questiondescription>
+      <questionsimplify>1</questionsimplify>
+      <assumepositive>0</assumepositive>
+      <assumereal>0</assumereal>
+      <prtcorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:green;"><i class="fa fa-check"></i></span> Correct answer, well done.]]></text>
+      </prtcorrect>
+      <prtpartiallycorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:orange;"><i class="fa fa-adjust"></i></span> Your answer is partially correct.]]></text>
+      </prtpartiallycorrect>
+      <prtincorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:red;"><i class="fa fa-times"></i></span> Incorrect answer.]]></text>
+      </prtincorrect>
+      <decimals>
+        <text>.</text>
+      </decimals>
+      <scientificnotation>
+        <text>*10</text>
+      </scientificnotation>
+      <multiplicationsign>dot</multiplicationsign>
+      <sqrtsign>1</sqrtsign>
+      <complexno>j</complexno>
+      <inversetrig>cos-1</inversetrig>
+      <logicsymbol>lang</logicsymbol>
+      <matrixparens>[</matrixparens>
+      <variantsselectionseed/>
+      <input>
+        <name>ans1</name>
+        <type>numerical</type>
+        <tans>target_ans1</tans>
+        <boxsize>10</boxsize>
+        <strictsyntax>1</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>1</mustverify>
+        <showvalidation>1</showvalidation>
+        <options/>
+      </input>
+      <input>
+        <name>ans2</name>
+        <type>numerical</type>
+        <tans>target_ans2</tans>
+        <boxsize>10</boxsize>
+        <strictsyntax>1</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>1</mustverify>
+        <showvalidation>1</showvalidation>
+        <options/>
+      </input>
+      <input>
+        <name>ans3</name>
+        <type>numerical</type>
+        <tans>target_ans3</tans>
+        <boxsize>10</boxsize>
+        <strictsyntax>1</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>1</mustverify>
+        <showvalidation>1</showvalidation>
+        <options/>
+      </input>
+      <prt>
+        <name>prt1</name>
+        <value>0.333333</value>
+        <autosimplify>1</autosimplify>
+        <feedbackstyle>1</feedbackstyle>
+        <feedbackvariables>
+          <text/>
+        </feedbackvariables>
+        <node>
+          <name>0</name>
+          <description>Check V_VA against target</description>
+          <answertest>NumAbsolute</answertest>
+          <sans>ans1</sans>
+          <tans>target_ans1</tans>
+          <testoptions>tol_ans1</testoptions>
+          <quiet>0</quiet>
+          <truescoremode>=</truescoremode>
+          <truescore>1.0</truescore>
+          <truepenalty/>
+          <truenextnode>-1</truenextnode>
+          <trueanswernote>prt1-1-T</trueanswernote>
+          <truefeedback format="html">
+            <text><![CDATA[<p>Correct! V_VA = {@ans1@} V is within {@tol_ans1@} V of the target {@target_ans1@} V.</p>]]></text>
+          </truefeedback>
+          <falsescoremode>=</falsescoremode>
+          <falsescore>0.0</falsescore>
+          <falsepenalty/>
+          <falsenextnode>-1</falsenextnode>
+          <falseanswernote>prt1-1-F</falseanswernote>
+          <falsefeedback format="html">
+            <text><![CDATA[<p>Not quite. V_VA = {@ans1@} V, but the target is {@target_ans1@} V (&plusmn; {@tol_ans1@} V).</p>]]></text>
+          </falsefeedback>
+        </node>
+      </prt>
+      <prt>
+        <name>prt2</name>
+        <value>0.333333</value>
+        <autosimplify>1</autosimplify>
+        <feedbackstyle>1</feedbackstyle>
+        <feedbackvariables>
+          <text/>
+        </feedbackvariables>
+        <node>
+          <name>0</name>
+          <description>Check V_VB against target</description>
+          <answertest>NumAbsolute</answertest>
+          <sans>ans2</sans>
+          <tans>target_ans2</tans>
+          <testoptions>tol_ans2</testoptions>
+          <quiet>0</quiet>
+          <truescoremode>=</truescoremode>
+          <truescore>1.0</truescore>
+          <truepenalty/>
+          <truenextnode>-1</truenextnode>
+          <trueanswernote>prt2-1-T</trueanswernote>
+          <truefeedback format="html">
+            <text><![CDATA[<p>Correct! V_VB = {@ans2@} V is within {@tol_ans2@} V of the target {@target_ans2@} V.</p>]]></text>
+          </truefeedback>
+          <falsescoremode>=</falsescoremode>
+          <falsescore>0.0</falsescore>
+          <falsepenalty/>
+          <falsenextnode>-1</falsenextnode>
+          <falseanswernote>prt2-1-F</falseanswernote>
+          <falsefeedback format="html">
+            <text><![CDATA[<p>Not quite. V_VB = {@ans2@} V, but the target is {@target_ans2@} V (&plusmn; {@tol_ans2@} V).</p>]]></text>
+          </falsefeedback>
+        </node>
+      </prt>
+      <prt>
+        <name>prt3</name>
+        <value>0.333333</value>
+        <autosimplify>1</autosimplify>
+        <feedbackstyle>1</feedbackstyle>
+        <feedbackvariables>
+          <text/>
+        </feedbackvariables>
+        <node>
+          <name>0</name>
+          <description>Check V_VM against target</description>
+          <answertest>NumAbsolute</answertest>
+          <sans>ans3</sans>
+          <tans>target_ans3</tans>
+          <testoptions>tol_ans3</testoptions>
+          <quiet>0</quiet>
+          <truescoremode>=</truescoremode>
+          <truescore>1.0</truescore>
+          <truepenalty/>
+          <truenextnode>-1</truenextnode>
+          <trueanswernote>prt3-1-T</trueanswernote>
+          <truefeedback format="html">
+            <text><![CDATA[<p>Correct! V_VM = {@ans3@} V is within {@tol_ans3@} V of the target {@target_ans3@} V.</p>]]></text>
+          </truefeedback>
+          <falsescoremode>=</falsescoremode>
+          <falsescore>0.0</falsescore>
+          <falsepenalty/>
+          <falsenextnode>-1</falsenextnode>
+          <falseanswernote>prt3-1-F</falseanswernote>
+          <falsefeedback format="html">
+            <text><![CDATA[<p>Not quite. V_VM = {@ans3@} V, but the target is {@target_ans3@} V (&plusmn; {@tol_ans3@} V).</p>]]></text>
+          </falsefeedback>
+        </node>
+      </prt>
+      <qtest>
+        <testcase>1</testcase>
+        <description>All correct</description>
+        <testinput>
+          <name>ans1</name>
+          <value>target_ans1</value>
+        </testinput>
+        <testinput>
+          <name>ans2</name>
+          <value>target_ans2</value>
+        </testinput>
+        <testinput>
+          <name>ans3</name>
+          <value>target_ans3</value>
+        </testinput>
+        <expected>
+          <name>prt1</name>
+          <expectedscore>1.0000000</expectedscore>
+          <expectedpenalty>0.0000000</expectedpenalty>
+          <expectedanswernote>prt1-1-T</expectedanswernote>
+        </expected>
+        <expected>
+          <name>prt2</name>
+          <expectedscore>1.0000000</expectedscore>
+          <expectedpenalty>0.0000000</expectedpenalty>
+          <expectedanswernote>prt2-1-T</expectedanswernote>
+        </expected>
+        <expected>
+          <name>prt3</name>
+          <expectedscore>1.0000000</expectedscore>
+          <expectedpenalty>0.0000000</expectedpenalty>
+          <expectedanswernote>prt3-1-T</expectedanswernote>
+        </expected>
+      </qtest>
+      <qtest>
+        <testcase>2</testcase>
+        <description>All wrong</description>
+        <testinput>
+          <name>ans1</name>
+          <value>target_ans1 + tol_ans1 + 1</value>
+        </testinput>
+        <testinput>
+          <name>ans2</name>
+          <value>target_ans2 + tol_ans2 + 1</value>
+        </testinput>
+        <testinput>
+          <name>ans3</name>
+          <value>target_ans3 + tol_ans3 + 1</value>
+        </testinput>
+        <expected>
+          <name>prt1</name>
+          <expectedscore>0.0000000</expectedscore>
+          <expectedpenalty>0.1000000</expectedpenalty>
+          <expectedanswernote>prt1-1-F</expectedanswernote>
+        </expected>
+        <expected>
+          <name>prt2</name>
+          <expectedscore>0.0000000</expectedscore>
+          <expectedpenalty>0.1000000</expectedpenalty>
+          <expectedanswernote>prt2-1-F</expectedanswernote>
+        </expected>
+        <expected>
+          <name>prt3</name>
+          <expectedscore>0.0000000</expectedscore>
+          <expectedpenalty>0.1000000</expectedpenalty>
+          <expectedanswernote>prt3-1-F</expectedanswernote>
+        </expected>
+      </qtest>
+    </plugin>
+    <tags>
+      <tag>
+        <text>circuitjs</text>
+      </tag>
+    </tags>
+  </question>
+</quiz>
