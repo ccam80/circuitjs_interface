@@ -465,12 +465,16 @@ def _build_readout_html(measurements, has_integrity=False):
 
 
 def _build_js_block(measurements, nodes=None, elements=None,
-                    rate=2, editable_indices=None, has_integrity=False):
+                    rate=2, editable_indices=None, has_integrity=False,
+                    sim_url=''):
     """Build the [[script]] JS block that reads values and writes to STACK inputs.
 
     The script sends a 'circuitjs-subscribe' config message to the simulator
     iframe via postMessage (works cross-origin inside STACK's sandbox), then
     listens for 'circuitjs-data' responses to update STACK inputs.
+
+    Circuit state is preserved across form submissions via a hidden
+    'ans_circuit' input that stores the compressed ctz.
     """
     if nodes is None:
         nodes = []
@@ -497,13 +501,27 @@ def _build_js_block(measurements, nodes=None, elements=None,
         js += ('const intId = await '
                'stack_js.request_access_to_input("ans_integrity", true);\n')
         js += 'const intInput = document.getElementById(intId);\n'
+
+    # Request access to circuit state input (preserves edits across Check)
+    js += ('const circId = await '
+           'stack_js.request_access_to_input("ans_circuit", true);\n')
+    js += 'const circInput = document.getElementById(circId);\n'
     js += "\n"
+
+    # Determine iframe URL: use saved circuit state if available
+    js += f'var origUrl = "{sim_url}";\n'
+    js += "var savedCtz = circInput.value;\n"
+    js += "var simFrame = document.getElementById('sim-frame');\n"
+    js += "if (savedCtz) {\n"
+    js += "  simFrame.src = origUrl.replace(/ctz=[^&]*/, 'ctz=' + savedCtz);\n"
+    js += "} else {\n"
+    js += "  simFrame.src = origUrl;\n"
+    js += "}\n\n"
 
     # Send subscribe config to circuitjs iframe after it loads
     nodes_js = json.dumps(nodes)
     elements_js = json.dumps(elements)
     indices_js = json.dumps(sorted(editable_indices))
-    js += "var simFrame = document.getElementById('sim-frame');\n"
     js += "simFrame.addEventListener('load', function() {\n"
     js += "  simFrame.contentWindow.postMessage({\n"
     js += "    type: 'circuitjs-subscribe',\n"
@@ -515,7 +533,15 @@ def _build_js_block(measurements, nodes=None, elements=None,
     js += "});\n\n"
 
     js += "window.addEventListener('message', function(event) {\n"
-    js += "  if (!event.data || event.data.type !== 'circuitjs-data') return;\n"
+    js += "  if (!event.data) return;\n\n"
+
+    # Save circuit state when elements message arrives with ctz
+    js += "  if (event.data.type === 'circuitjs-elements' && event.data.ctz) {\n"
+    js += "    circInput.value = event.data.ctz;\n"
+    js += "    circInput.dispatchEvent(new Event('change'));\n"
+    js += "  }\n\n"
+
+    js += "  if (event.data.type !== 'circuitjs-data') return;\n"
     js += "  var v;\n\n"
 
     # Update display for non-expression measurements
@@ -575,11 +601,12 @@ def generate_xml(name, description, ctz, measurements,
 
     nodes, elements = _derive_subscribe_params(measurements)
     sim_url = _build_sim_url(ctz, editable, white_bg, base_url,
-                             html_escape=True)
+                             html_escape=False)
     readout_html = _build_readout_html(measurements, has_integrity)
     js_block = _build_js_block(measurements, nodes=nodes, elements=elements,
                                rate=rate, editable_indices=editable_indices,
-                               has_integrity=has_integrity)
+                               has_integrity=has_integrity,
+                               sim_url=sim_url)
 
     graded = [(i, m) for i, m in enumerate(measurements) if m.graded]
     n_graded = len(graded) or 1
@@ -644,7 +671,7 @@ def generate_xml(name, description, ctz, measurements,
              'when you click &quot;Check&quot;.</em></p>\n\n')
     p.append('[[iframe height="640px" width="830px"]]\n')
     p.append('<div style="font-family:sans-serif;">\n\n')
-    p.append(f'  <iframe id="sim-frame"\n    src="{sim_url}"\n')
+    p.append('  <iframe id="sim-frame"\n')
     p.append('    width="800" height="550" style="border:1px solid #ccc;">\n')
     p.append('  </iframe>\n\n')
     p.append('  <div id="readout" style="display:none; font-family:monospace; '
@@ -671,6 +698,10 @@ def generate_xml(name, description, ctz, measurements,
         p.append('  <p>[[input:ans_integrity]] '
                  '[[validation:ans_integrity]]</p>\n')
         p.append('</div>\n')
+    # Hidden input to preserve circuit state across Check submissions
+    p.append('<div style="display:none;">\n')
+    p.append('  <p>[[input:ans_circuit]] [[validation:ans_circuit]]</p>\n')
+    p.append('</div>\n')
     p.append(']]></text>\n    </questiontext>\n')
 
     # --- general feedback ---
@@ -791,6 +822,26 @@ def generate_xml(name, description, ctz, measurements,
         p.append('        <options/>\n')
         p.append('      </input>\n')
 
+    # Circuit state hidden input (preserves edits across Check)
+    p.append('      <input>\n')
+    p.append('        <name>ans_circuit</name>\n')
+    p.append('        <type>string</type>\n')
+    p.append('        <tans>""</tans>\n')
+    p.append('        <boxsize>1</boxsize>\n')
+    p.append('        <strictsyntax>0</strictsyntax>\n')
+    p.append('        <insertstars>0</insertstars>\n')
+    p.append('        <syntaxhint/>\n')
+    p.append('        <syntaxattribute>0</syntaxattribute>\n')
+    p.append('        <forbidwords/>\n')
+    p.append('        <allowwords/>\n')
+    p.append('        <forbidfloat>0</forbidfloat>\n')
+    p.append('        <requirelowestterms>0</requirelowestterms>\n')
+    p.append('        <checkanswertype>0</checkanswertype>\n')
+    p.append('        <mustverify>0</mustverify>\n')
+    p.append('        <showvalidation>0</showvalidation>\n')
+    p.append('        <options/>\n')
+    p.append('      </input>\n')
+
     # --- PRTs (one per graded measurement) ---
     prt_weight = _fmt(1.0 / n_graded)
     for j, (i, m) in enumerate(graded):
@@ -902,6 +953,12 @@ def generate_xml(name, description, ctz, measurements,
     # --- test cases ---
     value_node = '1' if has_integrity else '0'
 
+    # Helper: add ans_circuit test input (empty string, not graded)
+    def _circuit_test_input():
+        return ('        <testinput>\n          <name>ans_circuit</name>\n'
+                '          <value>""\n</value>\n'
+                '        </testinput>\n')
+
     # Test 1: all correct
     p.append('      <qtest>\n')
     p.append('        <testcase>1</testcase>\n')
@@ -915,6 +972,7 @@ def generate_xml(name, description, ctz, measurements,
         p.append('        <testinput>\n          <name>ans_integrity</name>\n'
                  '          <value>1</value>\n'
                  '        </testinput>\n')
+    p.append(_circuit_test_input())
     for j in range(n_graded):
         prt_name = f'prt{j + 1}'
         p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
@@ -938,6 +996,7 @@ def generate_xml(name, description, ctz, measurements,
         p.append('        <testinput>\n          <name>ans_integrity</name>\n'
                  '          <value>1</value>\n'
                  '        </testinput>\n')
+    p.append(_circuit_test_input())
     for j in range(n_graded):
         prt_name = f'prt{j + 1}'
         p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
@@ -961,6 +1020,7 @@ def generate_xml(name, description, ctz, measurements,
         p.append('        <testinput>\n          <name>ans_integrity</name>\n'
                  '          <value>0</value>\n'
                  '        </testinput>\n')
+        p.append(_circuit_test_input())
         for j in range(n_graded):
             prt_name = f'prt{j + 1}'
             p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
@@ -1994,8 +2054,8 @@ class MainWindow(QMainWindow):
         self._sim_panel.web_view.page().runJavaScript(
             "(function() {"
             "  try {"
-            "    var f = document.getElementById('sim-frame');"
-            "    var sim = f.contentWindow.CircuitJS1;"
+            "    var sim = window.CircuitJS1;"
+            "    if (!sim) return null;"
             "    var elems = sim.getElements();"
             "    var info = [];"
             "    for (var i = 0; i < elems.length; i++) {"
