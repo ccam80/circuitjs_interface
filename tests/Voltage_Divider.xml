@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<quiz>
+  <question type="category">
+    <category>
+      <text>M1:</text>
+    </category>
+    <info format="html">
+      <text/>
+    </info>
+  </question>
+  <question type="stack">
+    <name>
+      <text>Voltage Divider</text>
+    </name>
+    <questiontext format="html">
+      <text><![CDATA[<p>Adjust the circuit as instructed.</p>
+
+<p><em>Edit the simulated circuit, the result will be read when you click &quot;Check&quot;.</em></p>
+
+[[iframe height="640px" width="830px"]]
+<div style="font-family:sans-serif;">
+
+  <iframe id="sim-frame"
+    src="https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&amp;ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqS8JCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&amp;editable=true"
+    width="800" height="550" style="border:1px solid #ccc;">
+  </iframe>
+
+  <div id="readout" style="display:none; font-family:monospace; padding:8px; font-size:14px;
+    background:#f4f4f4; border:1px solid #ddd; margin-top:4px;">
+    V<sub>R1</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span>
+    <div id="status" style="color:#999; margin-top:4px;">(waiting for simulation...)</div>
+  </div>
+
+</div>
+
+[[script type="module"]]
+import {stack_js} from '[[cors src="stackjsiframe.js"/]]';
+
+const ans1Id = await stack_js.request_access_to_input("ans1", true);
+const ans1Input = document.getElementById(ans1Id);
+
+var simFrame = document.getElementById('sim-frame');
+simFrame.addEventListener('load', function() {
+  simFrame.contentWindow.postMessage({
+    type: 'circuitjs-subscribe',
+    nodes: [],
+    elements: ["5:voltageDiff"],
+    rate: 2,
+    editableIndices: []
+  }, '*');
+});
+
+window.addEventListener('message', function(event) {
+  if (!event.data || event.data.type !== 'circuitjs-data') return;
+  var v;
+
+  v = event.data.values['5:voltageDiff'];
+  if (v !== null && v !== undefined) document.getElementById('val-ans1').textContent = v.toFixed(4);
+
+  v = event.data.values['5:voltageDiff'];
+  if (v !== null && v !== undefined) {
+    ans1Input.value = v.toFixed(6);
+    ans1Input.dispatchEvent(new Event('change'));
+  }
+  document.getElementById('status').textContent = '(live)';
+});
+[[/script]]
+[[/iframe]]
+
+<div style="display:none;">
+  <p>V_R1: [[input:ans1]] V [[validation:ans1]]</p>
+</div>
+]]></text>
+    </questiontext>
+    <generalfeedback format="html">
+      <text><![CDATA[<p>V_R1: target = {@target_ans1@} V (&plusmn; {@tol_ans1@} V), measured = {@ans1@} V</p>
+]]></text>
+    </generalfeedback>
+    <defaultgrade>1</defaultgrade>
+    <penalty>0.1</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+      <stackversion>
+        <text/>
+      </stackversion>
+      <questionvariables>
+        <text><![CDATA[P_expected: 0.0015;
+target_ans1: 3.3;
+tol_ans1: 0.1;
+]]></text>
+      </questionvariables>
+      <specificfeedback format="html">
+        <text><![CDATA[[[feedback:prt1]]]]></text>
+      </specificfeedback>
+      <questionnote format="html">
+        <text><![CDATA[V_R1={@target_ans1@}]]></text>
+      </questionnote>
+      <questiondescription format="html">
+        <text/>
+      </questiondescription>
+      <questionsimplify>1</questionsimplify>
+      <assumepositive>0</assumepositive>
+      <assumereal>0</assumereal>
+      <isbroken>0</isbroken>
+      <prtcorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:green;"><i class="fa fa-check"></i></span> Correct answer, well done.]]></text>
+      </prtcorrect>
+      <prtpartiallycorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:orange;"><i class="fa fa-adjust"></i></span> Your answer is partially correct.]]></text>
+      </prtpartiallycorrect>
+      <prtincorrect format="html">
+        <text><![CDATA[<span style="font-size: 1.5em; color:red;"><i class="fa fa-times"></i></span> Incorrect answer.]]></text>
+      </prtincorrect>
+      <decimals>.</decimals>
+      <scientificnotation>*10</scientificnotation>
+      <multiplicationsign>dot</multiplicationsign>
+      <sqrtsign>1</sqrtsign>
+      <complexno>j</complexno>
+      <inversetrig>cos-1</inversetrig>
+      <logicsymbol>lang</logicsymbol>
+      <matrixparens>[</matrixparens>
+      <variantsselectionseed/>
+      <input>
+        <name>ans1</name>
+        <type>numerical</type>
+        <tans>target_ans1</tans>
+        <boxsize>10</boxsize>
+        <strictsyntax>1</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>0</mustverify>
+        <showvalidation>0</showvalidation>
+        <options/>
+      </input>
+      <prt>
+        <name>prt1</name>
+        <value>1</value>
+        <autosimplify>1</autosimplify>
+        <feedbackstyle>1</feedbackstyle>
+        <feedbackvariables>
+          <text/>
+        </feedbackvariables>
+        <node>
+          <name>0</name>
+          <description>Check V_R1 against target</description>
+          <answertest>NumAbsolute</answertest>
+          <sans>ans1</sans>
+          <tans>target_ans1</tans>
+          <testoptions>tol_ans1</testoptions>
+          <quiet>0</quiet>
+          <truescoremode>=</truescoremode>
+          <truescore>1.0</truescore>
+          <truepenalty/>
+          <truenextnode>-1</truenextnode>
+          <trueanswernote>prt1-0-T</trueanswernote>
+          <truefeedback format="html">
+            <text><![CDATA[<p>Correct! V_R1 = {@ans1@} V is within {@tol_ans1@} V of the target {@target_ans1@} V.</p>]]></text>
+          </truefeedback>
+          <falsescoremode>=</falsescoremode>
+          <falsescore>0.0</falsescore>
+          <falsepenalty/>
+          <falsenextnode>-1</falsenextnode>
+          <falseanswernote>prt1-0-F</falseanswernote>
+          <falsefeedback format="html">
+            <text><![CDATA[<p>Not quite. V_R1 = {@ans1@} V, but the target is {@target_ans1@} V (&plusmn; {@tol_ans1@} V).</p>]]></text>
+          </falsefeedback>
+        </node>
+      </prt>
+      <qtest>
+        <testcase>1</testcase>
+        <description>All correct</description>
+        <testinput>
+          <name>ans1</name>
+          <value>target_ans1</value>
+        </testinput>
+        <expected>
+          <name>prt1</name>
+          <expectedscore>1.0000000</expectedscore>
+          <expectedpenalty>0.0000000</expectedpenalty>
+          <expectedanswernote>prt1-0-T</expectedanswernote>
+        </expected>
+      </qtest>
+      <qtest>
+        <testcase>2</testcase>
+        <description>All wrong</description>
+        <testinput>
+          <name>ans1</name>
+          <value>target_ans1 + tol_ans1 + 1</value>
+        </testinput>
+        <expected>
+          <name>prt1</name>
+          <expectedscore>0.0000000</expectedscore>
+          <expectedpenalty>0.1000000</expectedpenalty>
+          <expectedanswernote>prt1-0-F</expectedanswernote>
+        </expected>
+      </qtest>
+    <tags>
+      <tag>
+        <text>circuitjs</text>
+      </tag>
+    </tags>
+  </question>
+</quiz>
