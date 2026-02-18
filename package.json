@@ -1,5 +1,16 @@
 {
+  "name": "falstad-stack-integration",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/integrity.test.js",
+    "test:integration": "npx playwright test",
+    "test:all": "node --test tests/integrity.test.js && npx playwright test",
+    "serve": "node tests/serve.js"
+  },
   "dependencies": {
     "puppeteer": "^24.37.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

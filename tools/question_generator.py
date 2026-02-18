@@ -394,13 +394,13 @@ def extract_ctz(text):
 
 
 
-def _build_sim_url(ctz, editable, white_bg, base_url, html_escape=True):
+def _build_sim_url(ctz, white_bg, base_url, html_escape=True):
     """Build direct circuitjs.html URL (no bridge) for STACK [[iframe]] sandbox."""
     sep = '&amp;' if html_escape else '&'
     parts = ['running=true']
     if ctz:
         parts.append(f'ctz={ctz}')
-    parts.append(f'editable={"true" if editable else "false"}')
+    parts.append('editable=true')
     if white_bg:
         parts.append('whiteBackground=true')
     return base_url + '?' + sep.join(parts)
@@ -602,9 +602,9 @@ def _build_js_block(measurements, nodes=None, elements=None,
 
 def generate_xml(name, description, ctz, measurements,
                  editable_indices=None, removable_indices=None,
-                 type_rules=None, editable=True, white_bg=True,
-                 rate=2, hide_input=False, base_url=SIM_BASE_URL,
-                 category='', custom_qvars=''):
+                 type_rules=None, has_integrity=None,
+                 white_bg=True, rate=2, hide_input=False,
+                 base_url=SIM_BASE_URL, category='', custom_qvars=''):
     """Generate complete Moodle XML for a STACK + CircuitJS1 question."""
 
     if editable_indices is None:
@@ -613,13 +613,13 @@ def generate_xml(name, description, ctz, measurements,
         removable_indices = []
     if type_rules is None:
         type_rules = []
-    has_integrity = (len(editable_indices) > 0
-                     or len(removable_indices) > 0
-                     or len(type_rules) > 0)
+    if has_integrity is None:
+        has_integrity = (len(editable_indices) > 0
+                         or len(removable_indices) > 0
+                         or len(type_rules) > 0)
 
     nodes, elements = _derive_subscribe_params(measurements)
-    sim_url = _build_sim_url(ctz, editable, white_bg, base_url,
-                             html_escape=False)
+    sim_url = _build_sim_url(ctz, white_bg, base_url, html_escape=False)
     readout_html = _build_readout_html(measurements, has_integrity)
     js_block = _build_js_block(measurements, nodes=nodes, elements=elements,
                                rate=rate, editable_indices=editable_indices,
@@ -1169,13 +1169,9 @@ class SimulatorPanel(QWidget):
         """
         measurements = self.main._get_measurements()
         nodes, elements = _derive_subscribe_params(measurements)
-        mode = self.main._get_editable_mode()
-        is_custom = mode == 'custom'
-        editable_indices = (sorted(self.main._get_editable_indices())
-                            if is_custom else [])
-        removable_indices = (sorted(self.main._get_removable_indices())
-                              if is_custom else [])
-        type_rules = self.main._get_type_rules() if is_custom else []
+        editable_indices = sorted(self.main._get_editable_indices())
+        removable_indices = sorted(self.main._get_removable_indices())
+        type_rules = self.main._get_type_rules()
         nodes_js = json.dumps(nodes)
         elements_js = json.dumps(elements)
         edit_js = json.dumps(editable_indices)
@@ -1641,18 +1637,6 @@ class MainWindow(QMainWindow):
         # -- Components group (includes editability + type rules) --
         comp_grp = QGroupBox('Circuit Components')
         comp_lay = QVBoxLayout(comp_grp)
-
-        # Whole-circuit editability dropdown (above table)
-        edit_row = QHBoxLayout()
-        edit_row.addWidget(QLabel('Whole-circuit editability:'))
-        self.editable_combo = QComboBox()
-        self.editable_combo.addItem('All', 'all')
-        self.editable_combo.addItem('Custom', 'custom')
-        self.editable_combo.addItem('None', 'none')
-        self.editable_combo.setCurrentIndex(0)
-        edit_row.addWidget(self.editable_combo)
-        edit_row.addStretch()
-        comp_lay.addLayout(edit_row)
 
         # Component table starts with base columns; node columns added dynamically
         self._comp_base_columns = ['Label', 'Type', 'Value']
@@ -2356,8 +2340,6 @@ class MainWindow(QMainWindow):
             w.textChanged.connect(self._update_preview)
         for w in (self.desc_edit, self.ctz_edit):
             w.textChanged.connect(self._update_preview)
-        self.editable_combo.currentIndexChanged.connect(self._update_preview)
-
         # Buttons
         self.add_meas_btn.clicked.connect(
             lambda: self._add_measurement_row())
@@ -2373,29 +2355,16 @@ class MainWindow(QMainWindow):
     def _get_ctz(self):
         return extract_ctz(self.ctz_edit.toPlainText())
 
-    def _get_editable_mode(self):
-        """Return the current editable mode: 'all', 'custom', or 'none'."""
-        return self.editable_combo.currentData() or 'all'
-
-    def _is_editable(self):
-        """Whether the circuit is editable at all."""
-        return self._get_editable_mode() != 'none'
-
     def _get_sim_url(self):
         """Build circuitjs.html URL for the GUI preview."""
         return _build_sim_url(
-            self._get_ctz(), self._is_editable(),
-            False, SIM_BASE_URL, html_escape=False)
+            self._get_ctz(), False, SIM_BASE_URL, html_escape=False)
 
     def _generate(self):
         measurements = self._get_measurements()
-        mode = self._get_editable_mode()
-        is_custom = mode == 'custom'
-        editable_indices = (sorted(self._get_editable_indices())
-                            if is_custom else [])
-        removable_indices = (sorted(self._get_removable_indices())
-                              if is_custom else [])
-        type_rules = self._get_type_rules() if is_custom else []
+        editable_indices = sorted(self._get_editable_indices())
+        removable_indices = sorted(self._get_removable_indices())
+        type_rules = self._get_type_rules()
         return generate_xml(
             name=self.name_edit.text().strip()
                  or 'Untitled CircuitJS1 Question',
@@ -2406,7 +2375,6 @@ class MainWindow(QMainWindow):
             editable_indices=editable_indices,
             removable_indices=removable_indices,
             type_rules=type_rules,
-            editable=self._is_editable(),
             white_bg=False,
             rate=RATE_DEFAULT,
             hide_input=True,
@@ -2528,7 +2496,6 @@ class MainWindow(QMainWindow):
         s.setValue('name', self.name_edit.text())
         s.setValue('category', self.category_edit.text())
         s.setValue('ctz', self.ctz_edit.toPlainText())
-        s.setValue('editable_mode', self._get_editable_mode())
         # Save all rows (measurements + variable rows) as JSON
         s.setValue('measurements_json', json.dumps(
             self._get_all_rows_for_save()))
@@ -2550,11 +2517,6 @@ class MainWindow(QMainWindow):
             self.category_edit.setText(s.value('category', ''))
         if s.contains('ctz'):
             self.ctz_edit.setPlainText(s.value('ctz', ''))
-
-        if s.contains('editable_mode'):
-            mode = s.value('editable_mode', 'all')
-            mode_map = {'all': 0, 'custom': 1, 'values': 1, 'none': 2}
-            self.editable_combo.setCurrentIndex(mode_map.get(mode, 0))
 
         # Migrate old qvars_json into Variable rows (one-time)
         if s.contains('qvars_json'):
