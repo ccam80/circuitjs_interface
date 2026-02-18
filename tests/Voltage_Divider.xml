@@ -13,7 +13,7 @@
       <text>Voltage Divider</text>
     </name>
     <questiontext format="html">
-      <text><![CDATA[<p>Adjust the circuit as instructed.</p>
+      <text><![CDATA[<p>asdfads</p>
 
 <p><em>Edit the simulated circuit, the result will be read when you click &quot;Check&quot;.</em></p>
 
@@ -55,7 +55,7 @@ simFrame.addEventListener('load', function() {
     nodes: [],
     elements: ["5:voltageDiff"],
     rate: 2,
-    editableIndices: []
+    permissions: {"editableIndices": [], "removableIndices": [], "typeRules": []}
   }, '*');
 });
 
