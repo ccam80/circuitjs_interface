@@ -69,6 +69,7 @@ PROPERTY_PREFIX = {
 SOURCE_NODE = 'node'
 SOURCE_ELEMENT = 'element'
 SOURCE_EXPRESSION = 'expression'
+SOURCE_VARIABLE = 'variable'
 
 # Units for common Falstad element types (first parameter value)
 ELEMENT_TYPE_UNITS = {
@@ -1202,7 +1203,7 @@ class SimulatorPanel(QWidget):
             "var rate = 2;"
             "var skipEvery = Math.max(1, Math.round(60 / rate));"
             "var updateCount = 0;"
-            "var NON_ELEM = ['$','w','o','38','h','&'];"
+            "var NON_ELEM = ['$','o','38','h','&'];"
             "var baselineInfo = null;"
             "var baselineTypeCounts = null;"
             "var integrityOk = 1;"
@@ -1342,11 +1343,21 @@ class SimulatorPanel(QWidget):
             )
         js += (
             "  };"
-            # Immediately capture baseline from already-analyzed circuit
-            "  if (hasPerms) {"
-            "    try {"
-            "      var bElems = sim.getElements();"
-            "      var bExport = sim.exportCircuit();"
+            # Immediately capture elements + export for auto-refresh on load
+            "  try {"
+            "    var bElems = sim.getElements();"
+            "    var bExport = sim.exportCircuit();"
+            "    var bInfo2 = [];"
+            "    for (var bi = 0; bi < bElems.length; bi++) {"
+            "      var be = bElems[bi];"
+            "      var bp = 2; try { bp = be.getPostCount(); } catch(x) {}"
+            "      var bl = ''; try { bl = be.getLabelName() || ''; } catch(x) {}"
+            "      bInfo2.push({ index: bi, type: be.getType(), posts: bp, label: bl });"
+            "    }"
+            "    window._qgen_elements = bInfo2;"
+            "    window._qgen_export = bExport;"
+            # Also capture baseline for integrity checking
+            "    if (hasPerms) {"
             "      var bInfo = buildElemInfo(bExport, bElems);"
             "      if (bInfo) {"
             "        baselineInfo = bInfo;"
@@ -1356,8 +1367,8 @@ class SimulatorPanel(QWidget):
             "          baselineTypeCounts[at] = (baselineTypeCounts[at] || 0) + 1;"
             "        }"
             "      }"
-            "    } catch(e) {}"
-            "  }"
+            "    }"
+            "  } catch(e) {}"
             "}"
             "connect();"
             "})();"
@@ -1486,8 +1497,6 @@ class SimulatorPanel(QWidget):
         self.main.ctz_edit.setPlainText(ctz)
         self.main.statusBar().showMessage(
             f'Circuit saved — CTZ updated ({len(ctz)} chars)')
-        # Re-run element labeling with updated circuit
-        self.main._on_refresh_components()
         self.main._update_preview()
 
     def _on_use_value(self):
@@ -1518,6 +1527,12 @@ class SimulatorPanel(QWidget):
                 'Select or enter a node label or element label first.')
             return
         source = source_w.currentData()
+        if source == SOURCE_VARIABLE:
+            QMessageBox.information(
+                self, 'Variable',
+                'Variable rows define question variables and\n'
+                'cannot be set from simulator values.')
+            return
         if source == SOURCE_EXPRESSION:
             QMessageBox.information(
                 self, 'Expression',
@@ -1584,20 +1599,17 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setSpacing(6)
 
-        # --- Load from XML button (top) ---
-        load_row = QHBoxLayout()
-        self.load_xml_btn = QPushButton('Load from XML...')
-        load_row.addWidget(self.load_xml_btn)
-        load_row.addStretch()
-        layout.addLayout(load_row)
-
         # --- Question group (full width top) ---
         q_grp = QGroupBox('Question')
         q_lay = QFormLayout(q_grp)
 
+        name_row = QHBoxLayout()
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText('e.g. Voltage Divider - Adjust Vout')
-        q_lay.addRow('Name:', self.name_edit)
+        name_row.addWidget(self.name_edit, stretch=1)
+        self.load_xml_btn = QPushButton('Load from XML...')
+        name_row.addWidget(self.load_xml_btn)
+        q_lay.addRow('Name:', name_row)
 
         self.category_edit = QLineEdit()
         self.category_edit.setPlaceholderText(
@@ -1616,26 +1628,31 @@ class MainWindow(QMainWindow):
             'https://falstad.com/circuit/circuitjs.html?ctz=CQAg... or raw')
         q_lay.addRow('Circuit URL:', self.ctz_edit)
 
-        self.editable_combo = QComboBox()
-        self.editable_combo.addItem('All', 'all')
-        self.editable_combo.addItem('Custom', 'custom')
-        self.editable_combo.addItem('None', 'none')
-        self.editable_combo.setCurrentIndex(0)
-        q_lay.addRow('Editable:', self.editable_combo)
-
         layout.addWidget(q_grp)
 
         # --- Left/Right splitter ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # ---- LEFT PANE: Components + Grading + Settings ----
+        # ---- LEFT PANE: Components + Grading ----
         left_widget = QWidget()
         left_lay = QVBoxLayout(left_widget)
         left_lay.setContentsMargins(0, 0, 0, 0)
 
-        # -- Components group --
+        # -- Components group (includes editability + type rules) --
         comp_grp = QGroupBox('Circuit Components')
         comp_lay = QVBoxLayout(comp_grp)
+
+        # Whole-circuit editability dropdown (above table)
+        edit_row = QHBoxLayout()
+        edit_row.addWidget(QLabel('Whole-circuit editability:'))
+        self.editable_combo = QComboBox()
+        self.editable_combo.addItem('All', 'all')
+        self.editable_combo.addItem('Custom', 'custom')
+        self.editable_combo.addItem('None', 'none')
+        self.editable_combo.setCurrentIndex(0)
+        edit_row.addWidget(self.editable_combo)
+        edit_row.addStretch()
+        comp_lay.addLayout(edit_row)
 
         # Component table starts with base columns; node columns added dynamically
         self._comp_base_columns = ['Label', 'Type', 'Value']
@@ -1649,7 +1666,6 @@ class MainWindow(QMainWindow):
         comp_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         comp_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         comp_header.resizeSection(2, 90)
-        # Editable and Removable columns
         for c in range(self.comp_table.columnCount() - 2,
                        self.comp_table.columnCount()):
             comp_header.setSectionResizeMode(c, QHeaderView.ResizeMode.Fixed)
@@ -1657,23 +1673,12 @@ class MainWindow(QMainWindow):
         self.comp_table.verticalHeader().setVisible(False)
         comp_lay.addWidget(self.comp_table)
 
-        comp_btn_row = QHBoxLayout()
-        self.refresh_comp_btn = QPushButton('Refresh from Simulator')
-        self.refresh_comp_btn.setToolTip(
-            'Open the Live Simulator first, then click to populate '
-            'the component list')
-        comp_btn_row.addWidget(self.refresh_comp_btn)
         self.comp_status_label = QLabel('No components loaded')
         self.comp_status_label.setStyleSheet('color: #666;')
-        comp_btn_row.addWidget(self.comp_status_label)
-        comp_btn_row.addStretch()
-        comp_lay.addLayout(comp_btn_row)
+        comp_lay.addWidget(self.comp_status_label)
 
-        left_lay.addWidget(comp_grp)
-
-        # -- Type Permissions group --
-        tp_grp = QGroupBox('Type Permissions')
-        tp_lay = QVBoxLayout(tp_grp)
+        # -- Allowed add/remove components (type rules, inside comp group) --
+        comp_lay.addWidget(QLabel('Allowed add/remove components:'))
 
         self.type_rules_table = QTableWidget(0, 4)
         self.type_rules_table.setHorizontalHeaderLabels(
@@ -1688,15 +1693,15 @@ class MainWindow(QMainWindow):
         tp_header.resizeSection(3, 28)
         self.type_rules_table.verticalHeader().setVisible(False)
         self.type_rules_table.setMaximumHeight(120)
-        tp_lay.addWidget(self.type_rules_table)
+        comp_lay.addWidget(self.type_rules_table)
 
         tp_btn_row = QHBoxLayout()
         self.add_type_rule_btn = QPushButton('+ Add Type Rule')
         tp_btn_row.addWidget(self.add_type_rule_btn)
         tp_btn_row.addStretch()
-        tp_lay.addLayout(tp_btn_row)
+        comp_lay.addLayout(tp_btn_row)
 
-        left_lay.addWidget(tp_grp)
+        left_lay.addWidget(comp_grp)
 
         # -- Grading group --
         m_grp = QGroupBox('Grading')
@@ -1721,6 +1726,9 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(COL_REMOVE, QHeaderView.ResizeMode.Fixed)
         header.resizeSection(COL_REMOVE, 28)
         self.meas_table.verticalHeader().setVisible(False)
+        self.meas_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.meas_table.setTabKeyNavigation(False)
         self.meas_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.meas_table.setSelectionMode(
@@ -1734,30 +1742,6 @@ class MainWindow(QMainWindow):
         m_lay.addLayout(meas_btn_row)
 
         left_lay.addWidget(m_grp, stretch=1)
-
-        # -- Question Variables table (under Grading) --
-        qv_grp = QGroupBox('Question Variables')
-        qv_lay = QVBoxLayout(qv_grp)
-
-        self.qvars_table = QTableWidget(0, 3)
-        self.qvars_table.setHorizontalHeaderLabels(['Label', 'Expression', ''])
-        qv_header = self.qvars_table.horizontalHeader()
-        qv_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        qv_header.resizeSection(0, 120)
-        qv_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        qv_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        qv_header.resizeSection(2, 28)
-        self.qvars_table.verticalHeader().setVisible(False)
-        self.qvars_table.setMaximumHeight(120)
-        qv_lay.addWidget(self.qvars_table)
-
-        qv_btn_row = QHBoxLayout()
-        self.add_qvar_btn = QPushButton('+ Add Variable')
-        qv_btn_row.addWidget(self.add_qvar_btn)
-        qv_btn_row.addStretch()
-        qv_lay.addLayout(qv_btn_row)
-
-        left_lay.addWidget(qv_grp)
 
         left_lay.addStretch()
         splitter.addWidget(left_widget)
@@ -1806,20 +1790,27 @@ class MainWindow(QMainWindow):
         row = self.meas_table.rowCount()
         self.meas_table.insertRow(row)
 
-        # Source (Node / Element / Expression)
+        # Source (Node / Element / Expression / Variable)
         source_combo = QComboBox()
         source_combo.addItem('Node', SOURCE_NODE)
         source_combo.addItem('Element', SOURCE_ELEMENT)
         source_combo.addItem('Expression', SOURCE_EXPRESSION)
-        idx_map = {SOURCE_NODE: 0, SOURCE_ELEMENT: 1, SOURCE_EXPRESSION: 2}
+        source_combo.addItem('Variable', SOURCE_VARIABLE)
+        idx_map = {SOURCE_NODE: 0, SOURCE_ELEMENT: 1,
+                   SOURCE_EXPRESSION: 2, SOURCE_VARIABLE: 3}
         source_combo.setCurrentIndex(idx_map.get(source, 0))
         source_combo.currentIndexChanged.connect(self._on_source_changed)
         self.meas_table.setCellWidget(row, COL_SOURCE, source_combo)
 
-        # Identifier — QComboBox (editable) for Node/Element, QLineEdit for Expression
-        if source == SOURCE_EXPRESSION:
+        # Identifier — QComboBox (editable) for Node/Element,
+        # QLineEdit for Expression/Variable
+        is_text_source = source in (SOURCE_EXPRESSION, SOURCE_VARIABLE)
+        if is_text_source:
             ident_w = QLineEdit(identifier)
-            ident_w.setPlaceholderText('Maxima expr, e.g. V_R1 * I_R1')
+            if source == SOURCE_VARIABLE:
+                ident_w.setPlaceholderText('label: expression, e.g. R_total: 1000')
+            else:
+                ident_w.setPlaceholderText('Maxima expr, e.g. V_R1 * I_R1')
             ident_w.textChanged.connect(self._update_preview)
         else:
             ident_w = QComboBox()
@@ -1832,8 +1823,8 @@ class MainWindow(QMainWindow):
 
         # Property
         type_combo = QComboBox()
-        if source == SOURCE_EXPRESSION:
-            type_combo.addItem('(expression)', 'expression')
+        if source in (SOURCE_EXPRESSION, SOURCE_VARIABLE):
+            type_combo.addItem('(n/a)', 'expression')
             type_combo.setEnabled(False)
         elif source == SOURCE_NODE:
             type_combo.addItem(PROPERTY_DISPLAY['nodeVoltage'], 'nodeVoltage')
@@ -1847,6 +1838,7 @@ class MainWindow(QMainWindow):
 
         # Target — QLineEdit (accepts number or Maxima expression)
         target_edit = QLineEdit()
+        target_edit.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         if target_expr:
             target_edit.setText(target_expr)
         elif target != 0.0:
@@ -1857,6 +1849,7 @@ class MainWindow(QMainWindow):
 
         # Tolerance
         tol_spin = QDoubleSpinBox()
+        tol_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         tol_spin.setRange(0, 1e6)
         tol_spin.setDecimals(6)
         tol_spin.setSingleStep(0.01)
@@ -1890,6 +1883,10 @@ class MainWindow(QMainWindow):
         rm_btn.clicked.connect(self._on_remove_row)
         self.meas_table.setCellWidget(row, COL_REMOVE, rm_btn)
 
+        # Grey out fields for Variable source
+        if source == SOURCE_VARIABLE:
+            self._set_row_fields_enabled(row, False)
+
         self._update_preview()
 
     def _populate_ident_combo(self, combo, source):
@@ -1921,6 +1918,13 @@ class MainWindow(QMainWindow):
             return w.currentText().strip()
         return w.text().strip()
 
+    def _set_row_fields_enabled(self, row, enabled):
+        """Enable/disable the property, target, tolerance, tol type, and grade fields."""
+        for col in (COL_TYPE, COL_TARGET, COL_TOL, COL_TOLTYPE, COL_GRADE):
+            w = self.meas_table.cellWidget(row, col)
+            if w is not None:
+                w.setEnabled(enabled)
+
     def _on_remove_row(self):
         """Remove the measurement row whose 'x' button was clicked."""
         btn = self.sender()
@@ -1939,7 +1943,12 @@ class MainWindow(QMainWindow):
                 type_w = self.meas_table.cellWidget(row, COL_TYPE)
 
                 # Replace identifier widget
-                if source == SOURCE_EXPRESSION:
+                if source == SOURCE_VARIABLE:
+                    new_ident = QLineEdit()
+                    new_ident.setPlaceholderText(
+                        'label: expression, e.g. R_total: 1000')
+                    new_ident.textChanged.connect(self._update_preview)
+                elif source == SOURCE_EXPRESSION:
                     new_ident = QLineEdit()
                     new_ident.setPlaceholderText(
                         'Maxima expr, e.g. V_R1 * I_R1')
@@ -1955,8 +1964,8 @@ class MainWindow(QMainWindow):
                 type_w.blockSignals(True)
                 type_w.clear()
                 type_w.setEnabled(True)
-                if source == SOURCE_EXPRESSION:
-                    type_w.addItem('(expression)', 'expression')
+                if source in (SOURCE_EXPRESSION, SOURCE_VARIABLE):
+                    type_w.addItem('(n/a)', 'expression')
                     type_w.setEnabled(False)
                 elif source == SOURCE_NODE:
                     type_w.addItem(
@@ -1965,6 +1974,10 @@ class MainWindow(QMainWindow):
                     for p_key in ELEMENT_PROPERTIES:
                         type_w.addItem(PROPERTY_DISPLAY[p_key], p_key)
                 type_w.blockSignals(False)
+
+                # Grey out or enable fields
+                is_var = source == SOURCE_VARIABLE
+                self._set_row_fields_enabled(row, not is_var)
                 break
         self._update_preview()
 
@@ -1973,11 +1986,13 @@ class MainWindow(QMainWindow):
         self._update_preview()
 
     def _get_measurements(self):
-        """Read all measurements from the table."""
+        """Read all measurements from the table (skips Variable rows)."""
         measurements = []
         for row in range(self.meas_table.rowCount()):
             source = self.meas_table.cellWidget(
                 row, COL_SOURCE).currentData()
+            if source == SOURCE_VARIABLE:
+                continue  # variables are handled by _get_qvars_text
             identifier = self._get_ident_text(row)
             prop = self.meas_table.cellWidget(row, COL_TYPE).currentData()
 
@@ -2011,52 +2026,78 @@ class MainWindow(QMainWindow):
                     element_index=elem_idx))
         return measurements
 
+    def _get_all_rows_for_save(self):
+        """Read all rows from the table including Variable rows, for save."""
+        rows = []
+        for row in range(self.meas_table.rowCount()):
+            source = self.meas_table.cellWidget(
+                row, COL_SOURCE).currentData()
+            identifier = self._get_ident_text(row)
+            prop = self.meas_table.cellWidget(row, COL_TYPE).currentData()
+
+            target_text = self.meas_table.cellWidget(
+                row, COL_TARGET).text().strip()
+            target_val = 0.0
+            target_expr = ''
+            try:
+                target_val = float(target_text)
+            except (ValueError, TypeError):
+                target_expr = target_text
+
+            tol = self.meas_table.cellWidget(row, COL_TOL).value()
+            tol_type = self.meas_table.cellWidget(
+                row, COL_TOLTYPE).currentData()
+            container = self.meas_table.cellWidget(row, COL_GRADE)
+            grade_chk = container.findChild(QCheckBox)
+            graded = grade_chk.isChecked() if grade_chk else True
+
+            elem_idx = (self._label_map.get(identifier, -1)
+                        if source == SOURCE_ELEMENT else -1)
+
+            rows.append({
+                'source_type': source,
+                'identifier': identifier,
+                'property': prop or 'nodeVoltage',
+                'target': target_val,
+                'tolerance': tol,
+                'graded': graded,
+                'tolerance_type': tol_type or 'absolute',
+                'target_expr': target_expr,
+                'element_index': elem_idx,
+            })
+        return rows
+
     def _clear_measurements(self):
         """Remove all rows from the measurement table."""
         while self.meas_table.rowCount() > 0:
             self.meas_table.removeRow(0)
 
-    # ---- Question Variables table helpers ----
-
-    def _add_qvar_row(self, label='', expression=''):
-        """Add a row to the question variables table."""
-        row = self.qvars_table.rowCount()
-        self.qvars_table.insertRow(row)
-
-        label_edit = QLineEdit(label)
-        label_edit.setPlaceholderText('e.g. P_expected')
-        label_edit.textChanged.connect(self._update_preview)
-        self.qvars_table.setCellWidget(row, 0, label_edit)
-
-        expr_edit = QLineEdit(expression)
-        expr_edit.setPlaceholderText('e.g. 0.015')
-        expr_edit.textChanged.connect(self._update_preview)
-        self.qvars_table.setCellWidget(row, 1, expr_edit)
-
-        rm_btn = QPushButton('x')
-        rm_btn.setFixedWidth(28)
-        rm_btn.clicked.connect(self._on_remove_qvar_row)
-        self.qvars_table.setCellWidget(row, 2, rm_btn)
-
-        self._update_preview()
-
-    def _on_remove_qvar_row(self):
-        """Remove the qvar row whose 'x' button was clicked."""
-        btn = self.sender()
-        for row in range(self.qvars_table.rowCount()):
-            if self.qvars_table.cellWidget(row, 2) is btn:
-                self.qvars_table.removeRow(row)
-                break
-        self._update_preview()
-
     def _get_qvars_text(self):
-        """Build Maxima variable definitions from the qvars table."""
+        """Build Maxima variable definitions from Variable rows in the grading table.
+
+        Variable rows use the Identifier field in 'label: expression' format.
+        """
         lines = []
-        for row in range(self.qvars_table.rowCount()):
-            label = self.qvars_table.cellWidget(row, 0).text().strip()
-            expr = self.qvars_table.cellWidget(row, 1).text().strip()
-            if label and expr:
-                lines.append(f'{label}: {expr};')
+        for row in range(self.meas_table.rowCount()):
+            source = self.meas_table.cellWidget(
+                row, COL_SOURCE).currentData()
+            if source != SOURCE_VARIABLE:
+                continue
+            ident_text = self._get_ident_text(row)
+            if not ident_text:
+                continue
+            # If it already has a colon, treat as "label: expression"
+            if ':' in ident_text:
+                parts = ident_text.split(':', 1)
+                label = parts[0].strip()
+                expr = parts[1].strip()
+                if label and expr:
+                    lines.append(f'{label}: {expr};')
+            else:
+                # Treat whole thing as a raw Maxima statement
+                stmt = ident_text.strip().rstrip(';')
+                if stmt:
+                    lines.append(f'{stmt};')
         return '\n'.join(lines)
 
     # ---- Type Permissions table helpers ----
@@ -2304,64 +2345,6 @@ class MainWindow(QMainWindow):
                 f'{total} components (integrity checking OFF)')
             self.comp_status_label.setStyleSheet('color: #666;')
 
-    def _on_refresh_components(self):
-        """Refresh the component list from the simulator."""
-        if (self._sim_panel.web_view is None):
-            QMessageBox.information(
-                self, 'Open Simulator First',
-                'Open the Live Simulator and wait for it to load,\n'
-                'then click Refresh.')
-            return
-        # Query elements directly from CircuitJS1 API rather than relying
-        # on the cached circuitjs-elements message (which may have fired
-        # before our listener was injected).
-        self._sim_panel.web_view.page().runJavaScript(
-            "(function() {"
-            "  try {"
-            "    var sim = window.CircuitJS1;"
-            "    if (!sim) return null;"
-            "    var elems = sim.getElements();"
-            "    var info = [];"
-            "    for (var i = 0; i < elems.length; i++) {"
-            "      var e = elems[i];"
-            "      var posts = 2;"
-            "      try { posts = e.getPostCount(); } catch(x) {}"
-            "      var lbl = '';"
-            "      try { lbl = e.getLabelName() || ''; } catch(x) {}"
-            "      info.push({ index: i, type: e.getType(), posts: posts, label: lbl });"
-            "    }"
-            "    var exported = sim.exportCircuit();"
-            "    return JSON.stringify({ elements: info, export: exported });"
-            "  } catch(e) { return null; }"
-            "})()", 0,
-            self._on_elements_result)
-
-    def _on_elements_result(self, result):
-        """Handle element list from simulator."""
-        if not result or result == 'null':
-            QMessageBox.warning(
-                self, 'No Elements',
-                'No element data available. Make sure the simulator\n'
-                'has loaded and the circuit is running.')
-            return
-        try:
-            data = json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            return
-
-        elements = data.get('elements', [])
-        export_text = data.get('export', '')
-
-        # Parse element values from the export text
-        values = _parse_element_values(export_text, elements)
-        for i, elem in enumerate(elements):
-            elem['value'] = values[i] if i < len(values) else ''
-
-        self._populate_components(elements, export_text)
-        non_wire = sum(1 for e in elements if e.get('type') != 'WireElm')
-        self.statusBar().showMessage(
-            f'Loaded {non_wire} components ({len(self._node_list)} nodes)')
-
     # ---- Signal wiring ----
 
     def _connect_signals(self):
@@ -2378,13 +2361,8 @@ class MainWindow(QMainWindow):
         # Buttons
         self.add_meas_btn.clicked.connect(
             lambda: self._add_measurement_row())
-        self.add_qvar_btn.clicked.connect(
-            lambda: self._add_qvar_row())
         self.save_btn.clicked.connect(self._on_save)
         self.load_xml_btn.clicked.connect(self._on_load_xml)
-
-        # Editable components
-        self.refresh_comp_btn.clicked.connect(self._on_refresh_components)
 
         # Type permissions
         self.add_type_rule_btn.clicked.connect(
@@ -2551,17 +2529,9 @@ class MainWindow(QMainWindow):
         s.setValue('category', self.category_edit.text())
         s.setValue('ctz', self.ctz_edit.toPlainText())
         s.setValue('editable_mode', self._get_editable_mode())
-        # Save qvars table as JSON list of [label, expression] pairs
-        qvars_data = []
-        for row in range(self.qvars_table.rowCount()):
-            label = self.qvars_table.cellWidget(row, 0).text()
-            expr = self.qvars_table.cellWidget(row, 1).text()
-            qvars_data.append([label, expr])
-        s.setValue('qvars_json', json.dumps(qvars_data))
-        # Save measurements as JSON (includes new fields)
-        measurements = self._get_measurements()
+        # Save all rows (measurements + variable rows) as JSON
         s.setValue('measurements_json', json.dumps(
-            [asdict(m) for m in measurements]))
+            self._get_all_rows_for_save()))
         # Save editable and removable indices
         s.setValue('editable_indices', json.dumps(
             sorted(self._get_editable_indices())))
@@ -2586,12 +2556,17 @@ class MainWindow(QMainWindow):
             mode_map = {'all': 0, 'custom': 1, 'values': 1, 'none': 2}
             self.editable_combo.setCurrentIndex(mode_map.get(mode, 0))
 
+        # Migrate old qvars_json into Variable rows (one-time)
         if s.contains('qvars_json'):
             try:
                 for label, expr in json.loads(s.value('qvars_json', '[]')):
-                    self._add_qvar_row(label, expr)
+                    if label and expr:
+                        self._add_measurement_row(
+                            source=SOURCE_VARIABLE,
+                            identifier=f'{label}: {expr}')
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
+            s.remove('qvars_json')  # migrated, don't restore again
 
         # Restore index_to_label for dropdown population
         if s.contains('index_to_label'):
