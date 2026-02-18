@@ -26,7 +26,8 @@
 
   <div id="readout" style="display:none; font-family:monospace; padding:8px; font-size:14px;
     background:#f4f4f4; border:1px solid #ddd; margin-top:4px;">
-    V<sub>R1</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span>
+    V<sub>R1</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span><br/>
+    <span id="integrity-status" style="color:#999;">Integrity: waiting...</span>
     <div id="status" style="color:#999; margin-top:4px;">(waiting for simulation...)</div>
   </div>
 
@@ -37,10 +38,12 @@ import {stack_js} from '[[cors src="stackjsiframe.js"/]]';
 
 const ans1Id = await stack_js.request_access_to_input("ans1", true);
 const ans1Input = document.getElementById(ans1Id);
+const intId = await stack_js.request_access_to_input("ans_integrity", true);
+const intInput = document.getElementById(intId);
 const circId = await stack_js.request_access_to_input("ans_circuit", true);
 const circInput = document.getElementById(circId);
 
-var origUrl = "https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqS8JCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&editable=true";
+var origUrl = "https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqicXCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&editable=true";
 var savedCtz = circInput.value;
 var simFrame = document.getElementById('sim-frame');
 if (savedCtz) {
@@ -55,7 +58,7 @@ simFrame.addEventListener('load', function() {
     nodes: [],
     elements: ["5:voltageDiff"],
     rate: 2,
-    permissions: {"editableIndices": [], "removableIndices": [], "typeRules": []}
+    permissions: {"editableIndices": [5, 6], "removableIndices": [10], "typeRules": [{"type": "CapacitorElm", "maxAdd": 1, "maxRemove": 0}]}
   }, '*');
 });
 
@@ -78,6 +81,22 @@ window.addEventListener('message', function(event) {
     ans1Input.value = v.toFixed(6);
     ans1Input.dispatchEvent(new Event('change'));
   }
+
+  v = event.data.values['integrity'];
+  if (v !== null && v !== undefined) {
+    intInput.value = v.toString();
+    intInput.dispatchEvent(new Event('change'));
+    var el = document.getElementById('integrity-status');
+    if (el) {
+      if (v === 1) {
+        el.textContent = 'Integrity: OK';
+        el.style.color = '#090';
+      } else {
+        el.textContent = 'Integrity: FAILED — restricted component modified';
+        el.style.color = '#c00';
+      }
+    }
+  }
   document.getElementById('status').textContent = '(live)';
 });
 [[/script]]
@@ -85,6 +104,9 @@ window.addEventListener('message', function(event) {
 
 <div style="display:none;">
   <p>V_R1: [[input:ans1]] V [[validation:ans1]]</p>
+</div>
+<div style="display:none;">
+  <p>[[input:ans_integrity]] [[validation:ans_integrity]]</p>
 </div>
 <div style="display:none;">
   <p>[[input:ans_circuit]] [[validation:ans_circuit]]</p>
@@ -106,6 +128,7 @@ window.addEventListener('message', function(event) {
         <text><![CDATA[P_expected: 0.0015;
 target_ans1: 3.3;
 tol_ans1: 0.1;
+expected_integrity: 1;
 ]]></text>
       </questionvariables>
       <specificfeedback format="html">
@@ -158,6 +181,24 @@ tol_ans1: 0.1;
         <options/>
       </input>
       <input>
+        <name>ans_integrity</name>
+        <type>numerical</type>
+        <tans>expected_integrity</tans>
+        <boxsize>5</boxsize>
+        <strictsyntax>1</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>0</mustverify>
+        <showvalidation>0</showvalidation>
+        <options/>
+      </input>
+      <input>
         <name>ans_circuit</name>
         <type>string</type>
         <tans>""</tans>
@@ -185,6 +226,31 @@ tol_ans1: 0.1;
         </feedbackvariables>
         <node>
           <name>0</name>
+          <description>Integrity gate</description>
+          <answertest>AlgEquiv</answertest>
+          <sans>ans_integrity</sans>
+          <tans>expected_integrity</tans>
+          <testoptions/>
+          <quiet>1</quiet>
+          <truescoremode>=</truescoremode>
+          <truescore>0.0</truescore>
+          <truepenalty/>
+          <truenextnode>1</truenextnode>
+          <trueanswernote>prt1-0-T</trueanswernote>
+          <truefeedback format="html">
+            <text/>
+          </truefeedback>
+          <falsescoremode>=</falsescoremode>
+          <falsescore>0.0</falsescore>
+          <falsepenalty/>
+          <falsenextnode>-1</falsenextnode>
+          <falseanswernote>prt1-0-F</falseanswernote>
+          <falsefeedback format="html">
+            <text><![CDATA[<p style="color:#c00;">One or more restricted circuit components were modified. Your answer cannot be graded.</p>]]></text>
+          </falsefeedback>
+        </node>
+        <node>
+          <name>1</name>
           <description>Check V_R1 against target</description>
           <answertest>NumAbsolute</answertest>
           <sans>ans1</sans>
@@ -195,7 +261,7 @@ tol_ans1: 0.1;
           <truescore>1.0</truescore>
           <truepenalty/>
           <truenextnode>-1</truenextnode>
-          <trueanswernote>prt1-0-T</trueanswernote>
+          <trueanswernote>prt1-1-T</trueanswernote>
           <truefeedback format="html">
             <text><![CDATA[<p>Correct! V_R1 = {@ans1@} V is within {@tol_ans1@} V of the target {@target_ans1@} V.</p>]]></text>
           </truefeedback>
@@ -203,7 +269,7 @@ tol_ans1: 0.1;
           <falsescore>0.0</falsescore>
           <falsepenalty/>
           <falsenextnode>-1</falsenextnode>
-          <falseanswernote>prt1-0-F</falseanswernote>
+          <falseanswernote>prt1-1-F</falseanswernote>
           <falsefeedback format="html">
             <text><![CDATA[<p>Not quite. V_R1 = {@ans1@} V, but the target is {@target_ans1@} V (&plusmn; {@tol_ans1@} V).</p>]]></text>
           </falsefeedback>
@@ -217,6 +283,10 @@ tol_ans1: 0.1;
           <value>target_ans1</value>
         </testinput>
         <testinput>
+          <name>ans_integrity</name>
+          <value>1</value>
+        </testinput>
+        <testinput>
           <name>ans_circuit</name>
           <value>""
 </value>
@@ -225,7 +295,7 @@ tol_ans1: 0.1;
           <name>prt1</name>
           <expectedscore>1.0000000</expectedscore>
           <expectedpenalty>0.0000000</expectedpenalty>
-          <expectedanswernote>prt1-0-T</expectedanswernote>
+          <expectedanswernote>prt1-1-T</expectedanswernote>
         </expected>
       </qtest>
       <qtest>
@@ -234,6 +304,33 @@ tol_ans1: 0.1;
         <testinput>
           <name>ans1</name>
           <value>target_ans1 + tol_ans1 + 1</value>
+        </testinput>
+        <testinput>
+          <name>ans_integrity</name>
+          <value>1</value>
+        </testinput>
+        <testinput>
+          <name>ans_circuit</name>
+          <value>""
+</value>
+        </testinput>
+        <expected>
+          <name>prt1</name>
+          <expectedscore>0.0000000</expectedscore>
+          <expectedpenalty>0.1000000</expectedpenalty>
+          <expectedanswernote>prt1-1-F</expectedanswernote>
+        </expected>
+      </qtest>
+      <qtest>
+        <testcase>3</testcase>
+        <description>Integrity failure</description>
+        <testinput>
+          <name>ans1</name>
+          <value>target_ans1</value>
+        </testinput>
+        <testinput>
+          <name>ans_integrity</name>
+          <value>0</value>
         </testinput>
         <testinput>
           <name>ans_circuit</name>

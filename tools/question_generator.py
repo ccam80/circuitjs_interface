@@ -514,17 +514,17 @@ def _build_js_block(measurements, nodes=None, elements=None,
     js += 'const circInput = document.getElementById(circId);\n'
     js += "\n"
 
-    # Determine iframe URL: use saved circuit state if available
+    # Always load the original circuit in the iframe so the reporting
+    # script captures the author's baseline (not a student-modified one).
+    # Student edits are restored via importCircuit() after baseline capture.
     js += f'var origUrl = "{sim_url}";\n'
     js += "var savedCtz = circInput.value;\n"
     js += "var simFrame = document.getElementById('sim-frame');\n"
-    js += "if (savedCtz) {\n"
-    js += "  simFrame.src = origUrl.replace(/ctz=[^&]*/, 'ctz=' + savedCtz);\n"
-    js += "} else {\n"
-    js += "  simFrame.src = origUrl;\n"
-    js += "}\n\n"
+    js += "simFrame.src = origUrl;\n\n"
 
-    # Send subscribe config to circuitjs iframe after it loads
+    # Send subscribe config to circuitjs iframe after it loads.
+    # studentCtz carries any saved student edits for restoration after
+    # the baseline is captured from the original circuit.
     nodes_js = json.dumps(nodes)
     elements_js = json.dumps(elements)
     permissions_obj = {
@@ -539,7 +539,8 @@ def _build_js_block(measurements, nodes=None, elements=None,
     js += f"    nodes: {nodes_js},\n"
     js += f"    elements: {elements_js},\n"
     js += f"    rate: {rate},\n"
-    js += f"    permissions: {permissions_js}\n"
+    js += f"    permissions: {permissions_js},\n"
+    js += "    studentCtz: savedCtz || null\n"
     js += "  }, '*');\n"
     js += "});\n\n"
 
@@ -551,6 +552,13 @@ def _build_js_block(measurements, nodes=None, elements=None,
     js += "    circInput.value = event.data.ctz;\n"
     js += "    circInput.dispatchEvent(new Event('change'));\n"
     js += "  }\n\n"
+
+    # Route immediate integrity result to STACK input
+    if has_integrity:
+        js += "  if (event.data.type === 'circuitjs-integrity') {\n"
+        js += "    intInput.value = event.data.integrity.toString();\n"
+        js += "    intInput.dispatchEvent(new Event('change'));\n"
+        js += "  }\n\n"
 
     js += "  if (event.data.type !== 'circuitjs-data') return;\n"
     js += "  var v;\n\n"
