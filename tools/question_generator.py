@@ -21,7 +21,7 @@ from lzstring import LZString
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QGroupBox, QLabel, QLineEdit, QTextEdit, QPlainTextEdit,
-    QDoubleSpinBox, QCheckBox, QComboBox, QPushButton,
+    QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox, QPushButton,
     QFileDialog, QMessageBox, QTableWidget, QHeaderView,
     QAbstractItemView, QSplitter,
 )
@@ -465,7 +465,8 @@ def _build_readout_html(measurements, has_integrity=False):
 
 
 def _build_js_block(measurements, nodes=None, elements=None,
-                    rate=2, editable_indices=None, has_integrity=False,
+                    rate=2, editable_indices=None, removable_indices=None,
+                    type_rules=None, has_integrity=False,
                     sim_url=''):
     """Build the [[script]] JS block that reads values and writes to STACK inputs.
 
@@ -482,6 +483,10 @@ def _build_js_block(measurements, nodes=None, elements=None,
         elements = []
     if editable_indices is None:
         editable_indices = []
+    if removable_indices is None:
+        removable_indices = []
+    if type_rules is None:
+        type_rules = []
 
     # Only non-expression graded measurements get JS handling
     graded = [(i, m) for i, m in enumerate(measurements)
@@ -521,14 +526,19 @@ def _build_js_block(measurements, nodes=None, elements=None,
     # Send subscribe config to circuitjs iframe after it loads
     nodes_js = json.dumps(nodes)
     elements_js = json.dumps(elements)
-    indices_js = json.dumps(sorted(editable_indices))
+    permissions_obj = {
+        'editableIndices': sorted(editable_indices),
+        'removableIndices': sorted(removable_indices),
+        'typeRules': type_rules,
+    }
+    permissions_js = json.dumps(permissions_obj)
     js += "simFrame.addEventListener('load', function() {\n"
     js += "  simFrame.contentWindow.postMessage({\n"
     js += "    type: 'circuitjs-subscribe',\n"
     js += f"    nodes: {nodes_js},\n"
     js += f"    elements: {elements_js},\n"
     js += f"    rate: {rate},\n"
-    js += f"    editableIndices: {indices_js}\n"
+    js += f"    permissions: {permissions_js}\n"
     js += "  }, '*');\n"
     js += "});\n\n"
 
@@ -590,14 +600,21 @@ def _build_js_block(measurements, nodes=None, elements=None,
 
 
 def generate_xml(name, description, ctz, measurements,
-                 editable_indices=None, editable=True, white_bg=True,
+                 editable_indices=None, removable_indices=None,
+                 type_rules=None, editable=True, white_bg=True,
                  rate=2, hide_input=False, base_url=SIM_BASE_URL,
                  category='', custom_qvars=''):
     """Generate complete Moodle XML for a STACK + CircuitJS1 question."""
 
     if editable_indices is None:
         editable_indices = []
-    has_integrity = len(editable_indices) > 0
+    if removable_indices is None:
+        removable_indices = []
+    if type_rules is None:
+        type_rules = []
+    has_integrity = (len(editable_indices) > 0
+                     or len(removable_indices) > 0
+                     or len(type_rules) > 0)
 
     nodes, elements = _derive_subscribe_params(measurements)
     sim_url = _build_sim_url(ctz, editable, white_bg, base_url,
@@ -605,6 +622,8 @@ def generate_xml(name, description, ctz, measurements,
     readout_html = _build_readout_html(measurements, has_integrity)
     js_block = _build_js_block(measurements, nodes=nodes, elements=elements,
                                rate=rate, editable_indices=editable_indices,
+                               removable_indices=removable_indices,
+                               type_rules=type_rules,
                                has_integrity=has_integrity,
                                sim_url=sim_url)
 
@@ -1132,6 +1151,7 @@ class SimulatorPanel(QWidget):
         self._poll_timer.stop()
         self._latest_values = {}
         self._sim_connected = False
+        self._last_export_fp = None
         self.use_btn.setEnabled(False)
         self.save_circuit_btn.setEnabled(False)
         self.readout.setPlainText('Loading simulator...')
@@ -1149,32 +1169,52 @@ class SimulatorPanel(QWidget):
         measurements = self.main._get_measurements()
         nodes, elements = _derive_subscribe_params(measurements)
         mode = self.main._get_editable_mode()
+        is_custom = mode == 'custom'
         editable_indices = (sorted(self.main._get_editable_indices())
-                            if mode == 'values' else [])
+                            if is_custom else [])
+        removable_indices = (sorted(self.main._get_removable_indices())
+                              if is_custom else [])
+        type_rules = self.main._get_type_rules() if is_custom else []
         nodes_js = json.dumps(nodes)
         elements_js = json.dumps(elements)
-        indices_js = json.dumps(editable_indices)
-        has_integrity = len(editable_indices) > 0
+        edit_js = json.dumps(editable_indices)
+        rem_js = json.dumps(removable_indices)
+        rules_js = json.dumps(type_rules)
+        has_integrity = (len(editable_indices) > 0
+                         or len(removable_indices) > 0
+                         or len(type_rules) > 0)
 
         js = (
             "(function() {"
             f"var nodes = {nodes_js};"
             f"var elements = {elements_js};"
-            f"var editableIndices = new Set({indices_js});"
+            f"var editableIndices = new Set({edit_js});"
+            f"var removableIndices = new Set({rem_js});"
+            f"var typeRulesArr = {rules_js};"
+            "var typeRules = {};"
+            "for (var tr = 0; tr < typeRulesArr.length; tr++) {"
+            "  typeRules[typeRulesArr[tr].type] = {"
+            "    maxAdd: typeRulesArr[tr].maxAdd || 0,"
+            "    maxRemove: typeRulesArr[tr].maxRemove || 0"
+            "  };"
+            "}"
+            f"var hasPerms = {'true' if has_integrity else 'false'};"
             "var rate = 2;"
             "var skipEvery = Math.max(1, Math.round(60 / rate));"
             "var updateCount = 0;"
             "var NON_ELEM = ['$','w','o','38','h','&'];"
-            "var baseSigs = null;"
+            "var baselineInfo = null;"
+            "var baselineTypeCounts = null;"
             "var integrityOk = 1;"
             "window._qgen_values = null;"
             "window._qgen_elements = null;"
+            "window._qgen_export = null;"
             "window._qgen_connected = false;"
             "window._qgen_exportCircuit = function() {"
             "  try { return window.CircuitJS1.exportCircuit(); }"
             "  catch(e) { return null; }"
             "};"
-            "function extractSigs(txt, elems) {"
+            "function buildElemInfo(txt, elems) {"
             "  var lines = txt.split('\\n').filter(function(l) {"
             "    l = l.trim(); if (!l) return false;"
             "    for (var p = 0; p < NON_ELEM.length; p++) {"
@@ -1183,12 +1223,66 @@ class SimulatorPanel(QWidget):
             "    } return true;"
             "  });"
             "  if (lines.length !== elems.length) return null;"
-            "  var s = [];"
+            "  var info = [];"
             "  for (var i = 0; i < lines.length; i++) {"
             "    var f = lines[i].split(' ');"
             "    var pc; try { pc = elems[i].getPostCount(); } catch(e) { pc = 2; }"
-            "    s.push(f[0] + ' ' + f.slice(2*pc+2).join(' '));"
-            "  } return s;"
+            "    var coords = '';"
+            "    for (var c = 1; c < 1 + 2*pc && c < f.length; c++) {"
+            "      coords += (c > 1 ? ' ' : '') + f[c];"
+            "    }"
+            "    var apiType; try { apiType = elems[i].getType(); } catch(e) { apiType = ''; }"
+            "    info.push({ typeCode: f[0], coords: coords,"
+            "      paramSig: f.slice(2*pc+2).join(' '), apiType: apiType });"
+            "  } return info;"
+            "}"
+            "function checkIntegrity(curInfo) {"
+            "  if (!baselineInfo) return 1;"
+            "  var curByKey = {};"
+            "  for (var ci = 0; ci < curInfo.length; ci++) {"
+            "    curByKey[curInfo[ci].typeCode + '|' + curInfo[ci].coords] = curInfo[ci];"
+            "  }"
+            "  for (var bi = 0; bi < baselineInfo.length; bi++) {"
+            "    if (editableIndices.has(bi)) continue;"
+            "    if (removableIndices.has(bi)) continue;"
+            "    var bE = baselineInfo[bi];"
+            "    var m = curByKey[bE.typeCode + '|' + bE.coords];"
+            "    if (!m) return 0;"
+            "    if (m.paramSig !== bE.paramSig) return 0;"
+            "  }"
+            "  var curTC = {};"
+            "  for (var ti = 0; ti < curInfo.length; ti++) {"
+            "    var t = curInfo[ti].apiType;"
+            "    curTC[t] = (curTC[t] || 0) + 1;"
+            "  }"
+            "  var remTC = {};"
+            "  for (var ri = 0; ri < baselineInfo.length; ri++) {"
+            "    if (removableIndices.has(ri)) {"
+            "      var rt = baselineInfo[ri].apiType;"
+            "      remTC[rt] = (remTC[rt] || 0) + 1;"
+            "    }"
+            "  }"
+            "  for (var at in baselineTypeCounts) {"
+            "    var bc = baselineTypeCounts[at] || 0;"
+            "    var cc = curTC[at] || 0;"
+            "    var rule = typeRules[at];"
+            "    var remOfType = remTC[at] || 0;"
+            "    if (rule) {"
+            "      if (cc - bc > 0 && cc - bc > rule.maxAdd) return 0;"
+            "      var removed = bc - cc;"
+            "      if (removed > remOfType && removed - remOfType > rule.maxRemove) return 0;"
+            "    } else {"
+            "      if (cc > bc) return 0;"
+            "      if (bc - cc > remOfType) return 0;"
+            "    }"
+            "  }"
+            "  for (var nt in curTC) {"
+            "    if (!(nt in baselineTypeCounts)) {"
+            "      var nr = typeRules[nt];"
+            "      if (!nr || curTC[nt] > nr.maxAdd) return 0;"
+            "    }"
+            "  }"
+            "  return 1;"
             "}"
             "function connect() {"
             "  if (!window.CircuitJS1) { setTimeout(connect, 300); return; }"
@@ -1230,33 +1324,40 @@ class SimulatorPanel(QWidget):
             "    var info = [];"
             "    for (var k = 0; k < elems.length; k++) {"
             "      var e = elems[k];"
+            "      var posts = 2;"
+            "      try { posts = e.getPostCount(); } catch(x) {}"
             "      var lbl = '';"
             "      try { lbl = e.getLabelName() || ''; } catch(x) {}"
-            "      info.push({ index: k, type: e.getType(), label: lbl });"
+            "      info.push({ index: k, type: e.getType(), posts: posts, label: lbl });"
             "    }"
             "    window._qgen_elements = info;"
+            "    window._qgen_export = sim.exportCircuit();"
         )
         if has_integrity:
             js += (
-                "    if (editableIndices.size > 0) {"
-                "      var exp = sim.exportCircuit();"
-                "      var sigs = extractSigs(exp, elems);"
-                "      if (sigs) {"
-                "        if (!baseSigs) { baseSigs = sigs; }"
-                "        else {"
-                "          integrityOk = 1;"
-                "          for (var ci = 0; ci < baseSigs.length; ci++) {"
-                "            if (editableIndices.has(ci)) continue;"
-                "            if (ci >= sigs.length || sigs[ci] !== baseSigs[ci])"
-                "              { integrityOk = 0; break; }"
-                "          }"
-                "          if (sigs.length !== baseSigs.length) integrityOk = 0;"
-                "        }"
-                "      }"
+                "    if (hasPerms) {"
+                "      var eInfo = buildElemInfo(window._qgen_export, elems);"
+                "      if (eInfo) { integrityOk = checkIntegrity(eInfo); }"
                 "    }"
             )
         js += (
             "  };"
+            # Immediately capture baseline from already-analyzed circuit
+            "  if (hasPerms) {"
+            "    try {"
+            "      var bElems = sim.getElements();"
+            "      var bExport = sim.exportCircuit();"
+            "      var bInfo = buildElemInfo(bExport, bElems);"
+            "      if (bInfo) {"
+            "        baselineInfo = bInfo;"
+            "        baselineTypeCounts = {};"
+            "        for (var bt = 0; bt < bInfo.length; bt++) {"
+            "          var at = bInfo[bt].apiType;"
+            "          baselineTypeCounts[at] = (baselineTypeCounts[at] || 0) + 1;"
+            "        }"
+            "      }"
+            "    } catch(e) {}"
+            "  }"
             "}"
             "connect();"
             "})();"
@@ -1280,6 +1381,40 @@ class SimulatorPanel(QWidget):
         self.web_view.page().runJavaScript(
             'JSON.stringify(window._qgen_values)', 0,
             self._on_poll_result)
+        # Also poll element data for auto-refresh (consumed on read)
+        self.web_view.page().runJavaScript(
+            '(function() {'
+            '  var e = window._qgen_elements;'
+            '  var x = window._qgen_export;'
+            '  if (!e) return null;'
+            '  window._qgen_elements = null;'
+            '  window._qgen_export = null;'
+            '  return JSON.stringify({ elements: e, export: x });'
+            '})()', 0,
+            self._on_elements_poll_result)
+
+    def _on_elements_poll_result(self, result):
+        """Auto-refresh component table when circuit changes in simulator."""
+        if not result or result == 'null':
+            return
+        try:
+            data = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return
+        elements = data.get('elements', [])
+        export_text = data.get('export', '')
+        if not elements:
+            return
+        # Fingerprint by export text to avoid unnecessary table rebuilds
+        fp = hash(export_text)
+        if hasattr(self, '_last_export_fp') and self._last_export_fp == fp:
+            return
+        self._last_export_fp = fp
+        # Parse element values from export text
+        values = _parse_element_values(export_text, elements)
+        for i, elem in enumerate(elements):
+            elem['value'] = values[i] if i < len(values) else ''
+        self.main._populate_components(elements, export_text)
 
     def _on_poll_result(self, result):
         if not result or result == 'null':
@@ -1483,7 +1618,7 @@ class MainWindow(QMainWindow):
 
         self.editable_combo = QComboBox()
         self.editable_combo.addItem('All', 'all')
-        self.editable_combo.addItem('Values', 'values')
+        self.editable_combo.addItem('Custom', 'custom')
         self.editable_combo.addItem('None', 'none')
         self.editable_combo.setCurrentIndex(0)
         q_lay.addRow('Editable:', self.editable_combo)
@@ -1505,19 +1640,20 @@ class MainWindow(QMainWindow):
         # Component table starts with base columns; node columns added dynamically
         self._comp_base_columns = ['Label', 'Type', 'Value']
         self._comp_node_count = 0
-        self.comp_table = QTableWidget(0, len(self._comp_base_columns) + 1)
+        self.comp_table = QTableWidget(0, len(self._comp_base_columns) + 2)
         self.comp_table.setHorizontalHeaderLabels(
-            self._comp_base_columns + ['Editable'])
+            self._comp_base_columns + ['Editable', 'Removable'])
         comp_header = self.comp_table.horizontalHeader()
         comp_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         comp_header.resizeSection(0, 50)
         comp_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         comp_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         comp_header.resizeSection(2, 90)
-        # Last col = Editable
-        last = self.comp_table.columnCount() - 1
-        comp_header.setSectionResizeMode(last, QHeaderView.ResizeMode.Fixed)
-        comp_header.resizeSection(last, 60)
+        # Editable and Removable columns
+        for c in range(self.comp_table.columnCount() - 2,
+                       self.comp_table.columnCount()):
+            comp_header.setSectionResizeMode(c, QHeaderView.ResizeMode.Fixed)
+            comp_header.resizeSection(c, 60)
         self.comp_table.verticalHeader().setVisible(False)
         comp_lay.addWidget(self.comp_table)
 
@@ -1534,6 +1670,33 @@ class MainWindow(QMainWindow):
         comp_lay.addLayout(comp_btn_row)
 
         left_lay.addWidget(comp_grp)
+
+        # -- Type Permissions group --
+        tp_grp = QGroupBox('Type Permissions')
+        tp_lay = QVBoxLayout(tp_grp)
+
+        self.type_rules_table = QTableWidget(0, 4)
+        self.type_rules_table.setHorizontalHeaderLabels(
+            ['Element Type', 'Max Add', 'Max Remove', ''])
+        tp_header = self.type_rules_table.horizontalHeader()
+        tp_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tp_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        tp_header.resizeSection(1, 70)
+        tp_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        tp_header.resizeSection(2, 80)
+        tp_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        tp_header.resizeSection(3, 28)
+        self.type_rules_table.verticalHeader().setVisible(False)
+        self.type_rules_table.setMaximumHeight(120)
+        tp_lay.addWidget(self.type_rules_table)
+
+        tp_btn_row = QHBoxLayout()
+        self.add_type_rule_btn = QPushButton('+ Add Type Rule')
+        tp_btn_row.addWidget(self.add_type_rule_btn)
+        tp_btn_row.addStretch()
+        tp_lay.addLayout(tp_btn_row)
+
+        left_lay.addWidget(tp_grp)
 
         # -- Grading group --
         m_grp = QGroupBox('Grading')
@@ -1896,14 +2059,77 @@ class MainWindow(QMainWindow):
                 lines.append(f'{label}: {expr};')
         return '\n'.join(lines)
 
+    # ---- Type Permissions table helpers ----
+
+    def _add_type_rule_row(self, element_type='', max_add=0, max_remove=0):
+        """Add a row to the type permissions table."""
+        row = self.type_rules_table.rowCount()
+        self.type_rules_table.insertRow(row)
+
+        type_combo = QComboBox()
+        for etype in sorted(ELEMENT_LABEL_PREFIX.keys()):
+            type_combo.addItem(etype)
+        if element_type:
+            idx = type_combo.findText(element_type)
+            if idx >= 0:
+                type_combo.setCurrentIndex(idx)
+        type_combo.currentIndexChanged.connect(self._update_preview)
+        self.type_rules_table.setCellWidget(row, 0, type_combo)
+
+        add_spin = QSpinBox()
+        add_spin.setRange(0, 99)
+        add_spin.setValue(max_add)
+        add_spin.valueChanged.connect(self._update_preview)
+        self.type_rules_table.setCellWidget(row, 1, add_spin)
+
+        rem_spin = QSpinBox()
+        rem_spin.setRange(0, 99)
+        rem_spin.setValue(max_remove)
+        rem_spin.valueChanged.connect(self._update_preview)
+        self.type_rules_table.setCellWidget(row, 2, rem_spin)
+
+        rm_btn = QPushButton('x')
+        rm_btn.setFixedWidth(28)
+        rm_btn.clicked.connect(self._on_remove_type_rule_row)
+        self.type_rules_table.setCellWidget(row, 3, rm_btn)
+
+        self._update_preview()
+
+    def _on_remove_type_rule_row(self):
+        """Remove the type rule row whose 'x' button was clicked."""
+        btn = self.sender()
+        for row in range(self.type_rules_table.rowCount()):
+            if self.type_rules_table.cellWidget(row, 3) is btn:
+                self.type_rules_table.removeRow(row)
+                break
+        self._update_preview()
+
+    def _get_type_rules(self):
+        """Get list of type rule dicts: [{'type': ..., 'maxAdd': ..., 'maxRemove': ...}]."""
+        rules = []
+        for row in range(self.type_rules_table.rowCount()):
+            type_w = self.type_rules_table.cellWidget(row, 0)
+            add_w = self.type_rules_table.cellWidget(row, 1)
+            rem_w = self.type_rules_table.cellWidget(row, 2)
+            if type_w and add_w and rem_w:
+                rules.append({
+                    'type': type_w.currentText(),
+                    'maxAdd': add_w.value(),
+                    'maxRemove': rem_w.value(),
+                })
+        return rules
+
     # ---- Component table helpers ----
 
     def _populate_components(self, elements, export_text=''):
         """Populate the enhanced component table from element info list."""
-        # Preserve existing editable state, falling back to saved indices
+        # Preserve existing editable/removable state, falling back to saved
         old_editable = self._get_editable_indices()
         if not old_editable and hasattr(self, '_saved_editable_indices'):
             old_editable = self._saved_editable_indices
+        old_removable = self._get_removable_indices()
+        if not old_removable and hasattr(self, '_saved_removable_indices'):
+            old_removable = self._saved_removable_indices
 
         # Build labeling and connectivity
         self._elements = elements
@@ -1922,15 +2148,15 @@ class MainWindow(QMainWindow):
         max_posts = max((e.get('posts', 2) for e in non_wire), default=2)
         self._comp_node_count = max_posts
 
-        # Rebuild table columns: Label, Type, Value, Node1..NodeN, Editable
-        col_count = 3 + max_posts + 1  # base 3 + nodes + editable
+        # Rebuild table columns: Label, Type, Value, Node1..NodeN, Editable, Removable
+        col_count = 3 + max_posts + 2  # base 3 + nodes + editable + removable
         while self.comp_table.rowCount() > 0:
             self.comp_table.removeRow(0)
         self.comp_table.setColumnCount(col_count)
         headers = ['Label', 'Type', 'Value']
         for p in range(max_posts):
             headers.append(f'Node {p + 1}')
-        headers.append('Editable')
+        headers.extend(['Editable', 'Removable'])
         self.comp_table.setHorizontalHeaderLabels(headers)
 
         comp_header = self.comp_table.horizontalHeader()
@@ -1944,10 +2170,12 @@ class MainWindow(QMainWindow):
             comp_header.setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Fixed)
             comp_header.resizeSection(col, 110)
-        edit_col = col_count - 1
-        comp_header.setSectionResizeMode(
-            edit_col, QHeaderView.ResizeMode.Fixed)
-        comp_header.resizeSection(edit_col, 60)
+        edit_col = col_count - 2
+        rem_col = col_count - 1
+        for c in (edit_col, rem_col):
+            comp_header.setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Fixed)
+            comp_header.resizeSection(c, 60)
 
         # Populate rows (non-wire only)
         for elem in non_wire:
@@ -1997,6 +2225,17 @@ class MainWindow(QMainWindow):
             chk_layout.addWidget(chk)
             self.comp_table.setCellWidget(row, edit_col, chk_container)
 
+            # Removable checkbox
+            rem_container = QWidget()
+            rem_layout = QHBoxLayout(rem_container)
+            rem_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            rem_layout.setContentsMargins(0, 0, 0, 0)
+            rem_chk = QCheckBox()
+            rem_chk.setChecked(idx in old_removable)
+            rem_chk.stateChanged.connect(self._on_comp_editable_changed)
+            rem_layout.addWidget(rem_chk)
+            self.comp_table.setCellWidget(row, rem_col, rem_container)
+
         self._update_comp_status()
 
     def _get_editable_indices(self):
@@ -2004,9 +2243,26 @@ class MainWindow(QMainWindow):
         if not self._label_map:
             return set()
         indices = set()
-        edit_col = self.comp_table.columnCount() - 1
+        edit_col = self.comp_table.columnCount() - 2
         for row in range(self.comp_table.rowCount()):
             container = self.comp_table.cellWidget(row, edit_col)
+            chk = container.findChild(QCheckBox) if container else None
+            lbl_w = self.comp_table.cellWidget(row, 0)
+            if chk and chk.isChecked() and lbl_w:
+                label = lbl_w.text()
+                idx = self._label_map.get(label)
+                if idx is not None:
+                    indices.add(idx)
+        return indices
+
+    def _get_removable_indices(self):
+        """Get set of element indices marked as removable."""
+        if not self._label_map:
+            return set()
+        indices = set()
+        rem_col = self.comp_table.columnCount() - 1
+        for row in range(self.comp_table.rowCount()):
+            container = self.comp_table.cellWidget(row, rem_col)
             chk = container.findChild(QCheckBox) if container else None
             lbl_w = self.comp_table.cellWidget(row, 0)
             if chk and chk.isChecked() and lbl_w:
@@ -2028,16 +2284,24 @@ class MainWindow(QMainWindow):
             self.comp_status_label.setText('No components loaded')
             return
         editable = self._get_editable_indices()
-        locked = total - len(editable)
-        if editable:
+        removable = self._get_removable_indices()
+        type_rules = self._get_type_rules()
+        has_perms = len(editable) > 0 or len(removable) > 0 or len(type_rules) > 0
+        if has_perms:
+            parts = []
+            locked = total - len(editable) - len(removable)
+            if editable:
+                parts.append(f'{len(editable)} editable')
+            if removable:
+                parts.append(f'{len(removable)} removable')
+            if type_rules:
+                parts.append(f'{len(type_rules)} type rules')
             self.comp_status_label.setText(
-                f'{locked} locked, {len(editable)} editable '
-                f'(integrity checking ON)')
+                f'{", ".join(parts)} (integrity checking ON)')
             self.comp_status_label.setStyleSheet('color: #090;')
         else:
             self.comp_status_label.setText(
-                f'{total} components (integrity checking OFF — '
-                f'check at least one to enable)')
+                f'{total} components (integrity checking OFF)')
             self.comp_status_label.setStyleSheet('color: #666;')
 
     def _on_refresh_components(self):
@@ -2122,13 +2386,17 @@ class MainWindow(QMainWindow):
         # Editable components
         self.refresh_comp_btn.clicked.connect(self._on_refresh_components)
 
+        # Type permissions
+        self.add_type_rule_btn.clicked.connect(
+            lambda: self._add_type_rule_row())
+
     # ---- Helpers ----
 
     def _get_ctz(self):
         return extract_ctz(self.ctz_edit.toPlainText())
 
     def _get_editable_mode(self):
-        """Return the current editable mode: 'all', 'values', or 'none'."""
+        """Return the current editable mode: 'all', 'custom', or 'none'."""
         return self.editable_combo.currentData() or 'all'
 
     def _is_editable(self):
@@ -2144,8 +2412,12 @@ class MainWindow(QMainWindow):
     def _generate(self):
         measurements = self._get_measurements()
         mode = self._get_editable_mode()
+        is_custom = mode == 'custom'
         editable_indices = (sorted(self._get_editable_indices())
-                            if mode == 'values' else [])
+                            if is_custom else [])
+        removable_indices = (sorted(self._get_removable_indices())
+                              if is_custom else [])
+        type_rules = self._get_type_rules() if is_custom else []
         return generate_xml(
             name=self.name_edit.text().strip()
                  or 'Untitled CircuitJS1 Question',
@@ -2154,6 +2426,8 @@ class MainWindow(QMainWindow):
             ctz=self._get_ctz(),
             measurements=measurements,
             editable_indices=editable_indices,
+            removable_indices=removable_indices,
+            type_rules=type_rules,
             editable=self._is_editable(),
             white_bg=False,
             rate=RATE_DEFAULT,
@@ -2288,9 +2562,13 @@ class MainWindow(QMainWindow):
         measurements = self._get_measurements()
         s.setValue('measurements_json', json.dumps(
             [asdict(m) for m in measurements]))
-        # Save editable indices
+        # Save editable and removable indices
         s.setValue('editable_indices', json.dumps(
             sorted(self._get_editable_indices())))
+        s.setValue('removable_indices', json.dumps(
+            sorted(self._get_removable_indices())))
+        # Save type rules
+        s.setValue('type_rules_json', json.dumps(self._get_type_rules()))
         # Save index_to_label for populating dropdowns before simulator loads
         s.setValue('index_to_label', json.dumps(self._index_to_label))
 
@@ -2305,7 +2583,7 @@ class MainWindow(QMainWindow):
 
         if s.contains('editable_mode'):
             mode = s.value('editable_mode', 'all')
-            mode_map = {'all': 0, 'values': 1, 'none': 2}
+            mode_map = {'all': 0, 'custom': 1, 'values': 1, 'none': 2}
             self.editable_combo.setCurrentIndex(mode_map.get(mode, 0))
 
         if s.contains('qvars_json'):
@@ -2325,12 +2603,31 @@ class MainWindow(QMainWindow):
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
-        # Restore editable indices (applied when component table is populated)
+        # Restore editable/removable indices (applied when component table is populated)
         self._saved_editable_indices = set()
         if s.contains('editable_indices'):
             try:
                 self._saved_editable_indices = set(
                     json.loads(s.value('editable_indices', '[]')))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        self._saved_removable_indices = set()
+        if s.contains('removable_indices'):
+            try:
+                self._saved_removable_indices = set(
+                    json.loads(s.value('removable_indices', '[]')))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Restore type rules
+        if s.contains('type_rules_json'):
+            try:
+                for rule in json.loads(s.value('type_rules_json', '[]')):
+                    self._add_type_rule_row(
+                        element_type=rule.get('type', ''),
+                        max_add=rule.get('maxAdd', 0),
+                        max_remove=rule.get('maxRemove', 0))
             except (json.JSONDecodeError, TypeError):
                 pass
 

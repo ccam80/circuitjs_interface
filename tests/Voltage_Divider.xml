@@ -21,7 +21,6 @@
 <div style="font-family:sans-serif;">
 
   <iframe id="sim-frame"
-    src="https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&amp;ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqS8JCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&amp;editable=true"
     width="800" height="550" style="border:1px solid #ccc;">
   </iframe>
 
@@ -38,8 +37,18 @@ import {stack_js} from '[[cors src="stackjsiframe.js"/]]';
 
 const ans1Id = await stack_js.request_access_to_input("ans1", true);
 const ans1Input = document.getElementById(ans1Id);
+const circId = await stack_js.request_access_to_input("ans_circuit", true);
+const circInput = document.getElementById(circId);
 
+var origUrl = "https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqS8JCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&editable=true";
+var savedCtz = circInput.value;
 var simFrame = document.getElementById('sim-frame');
+if (savedCtz) {
+  simFrame.src = origUrl.replace(/ctz=[^&]*/, 'ctz=' + savedCtz);
+} else {
+  simFrame.src = origUrl;
+}
+
 simFrame.addEventListener('load', function() {
   simFrame.contentWindow.postMessage({
     type: 'circuitjs-subscribe',
@@ -51,7 +60,14 @@ simFrame.addEventListener('load', function() {
 });
 
 window.addEventListener('message', function(event) {
-  if (!event.data || event.data.type !== 'circuitjs-data') return;
+  if (!event.data) return;
+
+  if (event.data.type === 'circuitjs-elements' && event.data.ctz) {
+    circInput.value = event.data.ctz;
+    circInput.dispatchEvent(new Event('change'));
+  }
+
+  if (event.data.type !== 'circuitjs-data') return;
   var v;
 
   v = event.data.values['5:voltageDiff'];
@@ -69,6 +85,9 @@ window.addEventListener('message', function(event) {
 
 <div style="display:none;">
   <p>V_R1: [[input:ans1]] V [[validation:ans1]]</p>
+</div>
+<div style="display:none;">
+  <p>[[input:ans_circuit]] [[validation:ans_circuit]]</p>
 </div>
 ]]></text>
     </questiontext>
@@ -138,6 +157,24 @@ tol_ans1: 0.1;
         <showvalidation>0</showvalidation>
         <options/>
       </input>
+      <input>
+        <name>ans_circuit</name>
+        <type>string</type>
+        <tans>""</tans>
+        <boxsize>1</boxsize>
+        <strictsyntax>0</strictsyntax>
+        <insertstars>0</insertstars>
+        <syntaxhint/>
+        <syntaxattribute>0</syntaxattribute>
+        <forbidwords/>
+        <allowwords/>
+        <forbidfloat>0</forbidfloat>
+        <requirelowestterms>0</requirelowestterms>
+        <checkanswertype>0</checkanswertype>
+        <mustverify>0</mustverify>
+        <showvalidation>0</showvalidation>
+        <options/>
+      </input>
       <prt>
         <name>prt1</name>
         <value>1</value>
@@ -179,6 +216,11 @@ tol_ans1: 0.1;
           <name>ans1</name>
           <value>target_ans1</value>
         </testinput>
+        <testinput>
+          <name>ans_circuit</name>
+          <value>""
+</value>
+        </testinput>
         <expected>
           <name>prt1</name>
           <expectedscore>1.0000000</expectedscore>
@@ -192,6 +234,11 @@ tol_ans1: 0.1;
         <testinput>
           <name>ans1</name>
           <value>target_ans1 + tol_ans1 + 1</value>
+        </testinput>
+        <testinput>
+          <name>ans_circuit</name>
+          <value>""
+</value>
         </testinput>
         <expected>
           <name>prt1</name>
