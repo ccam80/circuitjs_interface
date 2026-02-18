@@ -26,7 +26,7 @@
 
   <div id="readout" style="display:none; font-family:monospace; padding:8px; font-size:14px;
     background:#f4f4f4; border:1px solid #ddd; margin-top:4px;">
-    V<sub>R1</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> V <span style="color:#090;">(graded)</span><br/>
+    P<sub>R1</sub> = <span id="val-ans1" style="font-weight:bold;">&mdash;</span> W <span style="color:#090;">(graded)</span><br/>
     <span id="integrity-status" style="color:#999;">Integrity: waiting...</span>
     <div id="status" style="color:#999; margin-top:4px;">(waiting for simulation...)</div>
   </div>
@@ -46,19 +46,16 @@ const circInput = document.getElementById(circId);
 var origUrl = "https://ccam80.github.io/circuitjs-moodle/circuitjs.html?running=true&ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxEO2QpRAQFMBaMMAKADdwxbtC8vaAFn6QoIQaLCjpUaAlYB3AeP4oJKqIuW9V6nZqVrRw8diEitRkPsFnrfTQCdT5l+BQjk8Vs9u1u-H4gaJ5S3r52IW4engjh0XiBdvqicXCsaORBAeLEhO6BIABqAIIZkFmR+CqiUYLFALLllbQxuflt9UUAQqxAA&editable=true";
 var savedCtz = circInput.value;
 var simFrame = document.getElementById('sim-frame');
-if (savedCtz) {
-  simFrame.src = origUrl.replace(/ctz=[^&]*/, 'ctz=' + savedCtz);
-} else {
-  simFrame.src = origUrl;
-}
+simFrame.src = origUrl;
 
 simFrame.addEventListener('load', function() {
   simFrame.contentWindow.postMessage({
     type: 'circuitjs-subscribe',
     nodes: [],
-    elements: ["5:voltageDiff"],
+    elements: ["5:power"],
     rate: 2,
-    permissions: {"editableIndices": [5, 6], "removableIndices": [10], "typeRules": [{"type": "CapacitorElm", "maxAdd": 1, "maxRemove": 0}]}
+    permissions: {"editableIndices": [5, 6], "removableIndices": [10], "typeRules": [{"type": "CapacitorElm", "maxAdd": 1, "maxRemove": 0}]},
+    studentCtz: savedCtz || null
   }, '*');
 });
 
@@ -70,13 +67,18 @@ window.addEventListener('message', function(event) {
     circInput.dispatchEvent(new Event('change'));
   }
 
+  if (event.data.type === 'circuitjs-integrity') {
+    intInput.value = event.data.integrity.toString();
+    intInput.dispatchEvent(new Event('change'));
+  }
+
   if (event.data.type !== 'circuitjs-data') return;
   var v;
 
-  v = event.data.values['5:voltageDiff'];
+  v = event.data.values['5:power'];
   if (v !== null && v !== undefined) document.getElementById('val-ans1').textContent = v.toFixed(4);
 
-  v = event.data.values['5:voltageDiff'];
+  v = event.data.values['5:power'];
   if (v !== null && v !== undefined) {
     ans1Input.value = v.toFixed(6);
     ans1Input.dispatchEvent(new Event('change'));
@@ -103,7 +105,7 @@ window.addEventListener('message', function(event) {
 [[/iframe]]
 
 <div style="display:none;">
-  <p>V_R1: [[input:ans1]] V [[validation:ans1]]</p>
+  <p>P_R1: [[input:ans1]] W [[validation:ans1]]</p>
 </div>
 <div style="display:none;">
   <p>[[input:ans_integrity]] [[validation:ans_integrity]]</p>
@@ -114,7 +116,7 @@ window.addEventListener('message', function(event) {
 ]]></text>
     </questiontext>
     <generalfeedback format="html">
-      <text><![CDATA[<p>V_R1: target = {@target_ans1@} V (&plusmn; {@tol_ans1@} V), measured = {@ans1@} V</p>
+      <text><![CDATA[<p>P_R1: target = {@target_ans1@} W (&plusmn; {@tol_ans1@} W), measured = {@ans1@} W</p>
 ]]></text>
     </generalfeedback>
     <defaultgrade>1</defaultgrade>
@@ -135,7 +137,7 @@ expected_integrity: 1;
         <text><![CDATA[[[feedback:prt1]]]]></text>
       </specificfeedback>
       <questionnote format="html">
-        <text><![CDATA[V_R1={@target_ans1@}]]></text>
+        <text><![CDATA[P_R1={@target_ans1@}]]></text>
       </questionnote>
       <questiondescription format="html">
         <text/>
@@ -251,7 +253,7 @@ expected_integrity: 1;
         </node>
         <node>
           <name>1</name>
-          <description>Check V_R1 against target</description>
+          <description>Check P_R1 against target</description>
           <answertest>NumAbsolute</answertest>
           <sans>ans1</sans>
           <tans>target_ans1</tans>
@@ -263,7 +265,7 @@ expected_integrity: 1;
           <truenextnode>-1</truenextnode>
           <trueanswernote>prt1-1-T</trueanswernote>
           <truefeedback format="html">
-            <text><![CDATA[<p>Correct! V_R1 = {@ans1@} V is within {@tol_ans1@} V of the target {@target_ans1@} V.</p>]]></text>
+            <text><![CDATA[<p>Correct! P_R1 = {@ans1@} W is within {@tol_ans1@} W of the target {@target_ans1@} W.</p>]]></text>
           </truefeedback>
           <falsescoremode>=</falsescoremode>
           <falsescore>0.0</falsescore>
@@ -271,7 +273,7 @@ expected_integrity: 1;
           <falsenextnode>-1</falsenextnode>
           <falseanswernote>prt1-1-F</falseanswernote>
           <falsefeedback format="html">
-            <text><![CDATA[<p>Not quite. V_R1 = {@ans1@} V, but the target is {@target_ans1@} V (&plusmn; {@tol_ans1@} V).</p>]]></text>
+            <text><![CDATA[<p>Not quite. P_R1 = {@ans1@} W, but the target is {@target_ans1@} W (&plusmn; {@tol_ans1@} W).</p>]]></text>
           </falsefeedback>
         </node>
       </prt>

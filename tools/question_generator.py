@@ -1684,6 +1684,7 @@ class MainWindow(QMainWindow):
         tp_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         tp_header.resizeSection(3, 28)
         self.type_rules_table.verticalHeader().setVisible(False)
+        self.type_rules_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.type_rules_table.setMaximumHeight(120)
         comp_lay.addWidget(self.type_rules_table)
 
@@ -1725,6 +1726,12 @@ class MainWindow(QMainWindow):
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.meas_table.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
+        # Prevent the table itself from stealing keyboard focus from its
+        # cell widgets (QLineEdit, QDoubleSpinBox).  Without this, clicking
+        # a cell widget lets the table grab focus and swallow keystrokes
+        # (NoEditTriggers means the table never enters edit mode, so keys
+        # are silently eaten).
+        self.meas_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         m_lay.addWidget(self.meas_table)
 
         meas_btn_row = QHBoxLayout()
@@ -1768,6 +1775,9 @@ class MainWindow(QMainWindow):
                     w = self.meas_table.cellWidget(row, col)
                     if w is not None and (w is new or w.isAncestorOf(new)):
                         self.meas_table.selectRow(row)
+                        # selectRow can steal focus back to the table;
+                        # give it back to the widget the user clicked.
+                        new.setFocus()
                         return
         finally:
             self._in_focus_handler = False
