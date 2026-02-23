@@ -290,8 +290,7 @@ expected_integrity: 1;
         </testinput>
         <testinput>
           <name>ans_circuit</name>
-          <value>""
-</value>
+          <value>""</value>
         </testinput>
         <expected>
           <name>prt1</name>
@@ -313,8 +312,7 @@ expected_integrity: 1;
         </testinput>
         <testinput>
           <name>ans_circuit</name>
-          <value>""
-</value>
+          <value>""</value>
         </testinput>
         <expected>
           <name>prt1</name>
@@ -336,8 +334,7 @@ expected_integrity: 1;
         </testinput>
         <testinput>
           <name>ans_circuit</name>
-          <value>""
-</value>
+          <value>""</value>
         </testinput>
         <expected>
           <name>prt1</name>

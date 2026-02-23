@@ -14,9 +14,12 @@ import sys
 import re
 import json
 from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from lzstring import LZString
+
+from falstad_compiler import compile as falstad_compile
+from stack_compiler import compile_question
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -383,7 +386,7 @@ class Measurement:
 
 
 # ---------------------------------------------------------------------------
-# XML generation
+# Circuit helpers (used by GUI and compiler)
 # ---------------------------------------------------------------------------
 
 def extract_ctz(text):
@@ -406,22 +409,6 @@ def _build_sim_url(ctz, white_bg, base_url, html_escape=True):
     return base_url + '?' + sep.join(parts)
 
 
-def _esc(text):
-    """XML-escape for text nodes."""
-    return (text.replace('&', '&amp;')
-                .replace('<', '&lt;')
-                .replace('>', '&gt;'))
-
-
-def _esc_cdata(text):
-    """Escape for CDATA (only ]]> needs escaping)."""
-    return text.replace(']]>', ']]]]><![CDATA[>')
-
-
-def _fmt(v):
-    """Format number for Maxima: drop unnecessary trailing zeros."""
-    return f'{v:g}'
-
 
 def _derive_subscribe_params(measurements):
     """Split measurements into subscribe message params: nodes and elements lists.
@@ -442,630 +429,6 @@ def _derive_subscribe_params(measurements):
         # SOURCE_EXPRESSION measurements are computed, not from simulator
     return nodes, elements
 
-
-def _build_readout_html(measurements, has_integrity=False):
-    """Build HTML readout lines for all measurements."""
-    lines = []
-    for i, m in enumerate(measurements):
-        if m.source_type == SOURCE_EXPRESSION:
-            continue  # expressions are computed server-side, not displayed live
-        bold = ' style="font-weight:bold;"' if m.graded else ''
-        tag = (' <span style="color:#090;">(graded)</span>'
-               if m.graded else '')
-        iname = m.input_name(i)
-        prefix = PROPERTY_PREFIX.get(m.property, 'V')
-        lines.append(
-            f'    {prefix}<sub>{m.identifier}</sub> = '
-            f'<span id="val-{iname}"{bold}>&mdash;</span> '
-            f'{m.unit()}{tag}')
-    if has_integrity:
-        lines.append(
-            '    <span id="integrity-status" '
-            'style="color:#999;">Integrity: waiting...</span>')
-    return '<br/>\n'.join(lines) if lines else '    (no measurements configured)'
-
-
-def _build_js_block(measurements, nodes=None, elements=None,
-                    rate=2, editable_indices=None, removable_indices=None,
-                    type_rules=None, has_integrity=False,
-                    sim_url=''):
-    """Build the [[script]] JS block that reads values and writes to STACK inputs.
-
-    The script sends a 'circuitjs-subscribe' config message to the simulator
-    iframe via postMessage (works cross-origin inside STACK's sandbox), then
-    listens for 'circuitjs-data' responses to update STACK inputs.
-
-    Circuit state is preserved across form submissions via a hidden
-    'ans_circuit' input that stores the compressed ctz.
-    """
-    if nodes is None:
-        nodes = []
-    if elements is None:
-        elements = []
-    if editable_indices is None:
-        editable_indices = []
-    if removable_indices is None:
-        removable_indices = []
-    if type_rules is None:
-        type_rules = []
-
-    # Only non-expression graded measurements get JS handling
-    graded = [(i, m) for i, m in enumerate(measurements)
-              if m.graded and m.source_type != SOURCE_EXPRESSION]
-
-    js = "import {stack_js} from '[[cors src=\"stackjsiframe.js\"/]]';\n\n"
-
-    # Request access to each graded STACK input
-    for i, m in graded:
-        iname = m.input_name(i)
-        js += (f'const {iname}Id = await '
-               f'stack_js.request_access_to_input("{iname}", true);\n')
-        js += f'const {iname}Input = document.getElementById({iname}Id);\n'
-
-    # Request access to integrity input if active
-    if has_integrity:
-        js += ('const intId = await '
-               'stack_js.request_access_to_input("ans_integrity", true);\n')
-        js += 'const intInput = document.getElementById(intId);\n'
-
-    # Request access to circuit state input (preserves edits across Check)
-    js += ('const circId = await '
-           'stack_js.request_access_to_input("ans_circuit", true);\n')
-    js += 'const circInput = document.getElementById(circId);\n'
-    js += "\n"
-
-    # Always load the original circuit in the iframe so the reporting
-    # script captures the author's baseline (not a student-modified one).
-    # Student edits are restored via importCircuit() after baseline capture.
-    js += f'var origUrl = "{sim_url}";\n'
-    js += "var savedCtz = circInput.value;\n"
-    js += "var simFrame = document.getElementById('sim-frame');\n"
-    js += "simFrame.src = origUrl;\n\n"
-
-    # Send subscribe config to circuitjs iframe after it loads.
-    # studentCtz carries any saved student edits for restoration after
-    # the baseline is captured from the original circuit.
-    nodes_js = json.dumps(nodes)
-    elements_js = json.dumps(elements)
-    permissions_obj = {
-        'editableIndices': sorted(editable_indices),
-        'removableIndices': sorted(removable_indices),
-        'typeRules': type_rules,
-    }
-    permissions_js = json.dumps(permissions_obj)
-    js += "simFrame.addEventListener('load', function() {\n"
-    js += "  simFrame.contentWindow.postMessage({\n"
-    js += "    type: 'circuitjs-subscribe',\n"
-    js += f"    nodes: {nodes_js},\n"
-    js += f"    elements: {elements_js},\n"
-    js += f"    rate: {rate},\n"
-    js += f"    permissions: {permissions_js},\n"
-    js += "    studentCtz: savedCtz || null\n"
-    js += "  }, '*');\n"
-    js += "});\n\n"
-
-    js += "window.addEventListener('message', function(event) {\n"
-    js += "  if (!event.data) return;\n\n"
-
-    # Save circuit state when elements message arrives with ctz
-    js += "  if (event.data.type === 'circuitjs-elements' && event.data.ctz) {\n"
-    js += "    circInput.value = event.data.ctz;\n"
-    js += "    circInput.dispatchEvent(new Event('change'));\n"
-    js += "  }\n\n"
-
-    # Route immediate integrity result to STACK input
-    if has_integrity:
-        js += "  if (event.data.type === 'circuitjs-integrity') {\n"
-        js += "    intInput.value = event.data.integrity.toString();\n"
-        js += "    intInput.dispatchEvent(new Event('change'));\n"
-        js += "  }\n\n"
-
-    js += "  if (event.data.type !== 'circuitjs-data') return;\n"
-    js += "  var v;\n\n"
-
-    # Update display for non-expression measurements
-    for i, m in enumerate(measurements):
-        if m.source_type == SOURCE_EXPRESSION:
-            continue
-        iname = m.input_name(i)
-        key = m.data_key()
-        js += f"  v = event.data.values['{key}'];\n"
-        js += (f"  if (v !== null && v !== undefined) "
-               f"document.getElementById('val-{iname}').textContent "
-               f"= v.toFixed(4);\n")
-    js += "\n"
-
-    # Write graded values to STACK inputs
-    for i, m in graded:
-        iname = m.input_name(i)
-        key = m.data_key()
-        js += f"  v = event.data.values['{key}'];\n"
-        js += "  if (v !== null && v !== undefined) {\n"
-        js += f"    {iname}Input.value = v.toFixed(6);\n"
-        js += f"    {iname}Input.dispatchEvent(new Event('change'));\n"
-        js += "  }\n"
-
-    # Route integrity value to STACK input
-    if has_integrity:
-        js += "\n  v = event.data.values['integrity'];\n"
-        js += "  if (v !== null && v !== undefined) {\n"
-        js += "    intInput.value = v.toString();\n"
-        js += "    intInput.dispatchEvent(new Event('change'));\n"
-        js += "    var el = document.getElementById('integrity-status');\n"
-        js += "    if (el) {\n"
-        js += "      if (v === 1) {\n"
-        js += "        el.textContent = 'Integrity: OK';\n"
-        js += "        el.style.color = '#090';\n"
-        js += "      } else {\n"
-        js += "        el.textContent = 'Integrity: FAILED — restricted component modified';\n"
-        js += "        el.style.color = '#c00';\n"
-        js += "      }\n"
-        js += "    }\n"
-        js += "  }\n"
-
-    js += "  document.getElementById('status').textContent = '(live)';\n"
-    js += "});"
-    return js
-
-
-def generate_xml(name, description, ctz, measurements,
-                 editable_indices=None, removable_indices=None,
-                 type_rules=None, has_integrity=None,
-                 white_bg=True, rate=2, hide_input=False,
-                 base_url=SIM_BASE_URL, category='', custom_qvars=''):
-    """Generate complete Moodle XML for a STACK + CircuitJS1 question."""
-
-    if editable_indices is None:
-        editable_indices = []
-    if removable_indices is None:
-        removable_indices = []
-    if type_rules is None:
-        type_rules = []
-    if has_integrity is None:
-        has_integrity = (len(editable_indices) > 0
-                         or len(removable_indices) > 0
-                         or len(type_rules) > 0)
-
-    nodes, elements = _derive_subscribe_params(measurements)
-    sim_url = _build_sim_url(ctz, white_bg, base_url, html_escape=False)
-    readout_html = _build_readout_html(measurements, has_integrity)
-    js_block = _build_js_block(measurements, nodes=nodes, elements=elements,
-                               rate=rate, editable_indices=editable_indices,
-                               removable_indices=removable_indices,
-                               type_rules=type_rules,
-                               has_integrity=has_integrity,
-                               sim_url=sim_url)
-
-    graded = [(i, m) for i, m in enumerate(measurements) if m.graded]
-    n_graded = len(graded) or 1
-
-    input_style = ' style="display:none;"' if hide_input else ''
-    must_verify = '0' if hide_input else '1'
-    show_validation = '0' if hide_input else '1'
-
-    cat_block = ''
-    if category.strip():
-        cat_block = (
-            '  <question type="category">\n'
-            '    <category>\n'
-            f'      <text>{_esc(category)}</text>\n'
-            '    </category>\n'
-            '    <info format="html">\n'
-            '      <text/>\n'
-            '    </info>\n'
-            '  </question>\n')
-
-    # --- Build question variables ---
-    qvar_lines = []
-    for i, m in graded:
-        iname = m.input_name(i)
-        if m.target_expr:
-            qvar_lines.append(f'target_{iname}: {m.target_expr};')
-        else:
-            qvar_lines.append(f'target_{iname}: {_fmt(m.target)};')
-        qvar_lines.append(f'tol_{iname}: {_fmt(m.tolerance)};')
-    if has_integrity:
-        qvar_lines.append('expected_integrity: 1;')
-    qvars = '\n'.join(qvar_lines) if qvar_lines else '/* no graded measurements */'
-
-    # Prepend custom question variables if provided
-    if custom_qvars.strip():
-        qvars = custom_qvars.strip() + '\n' + qvars
-
-    # --- Build target summary for question text ---
-    target_lines = []
-    for i, m in graded:
-        dname = m.display_name()
-        iname = m.input_name(i)
-        target_lines.append(
-            f'<strong>{dname}</strong>: {{@target_{iname}@}} {m.unit()} '
-            f'(&plusmn; {{@tol_{iname}@}} {m.unit()})')
-    target_html = ''
-    if not hide_input and target_lines:
-        target_html = '<p>Targets: ' + ', '.join(target_lines) + '</p>\n\n'
-
-    # --- Assemble XML ---
-    p = []
-    p.append('<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n')
-    p.append(cat_block)
-    p.append('  <question type="stack">\n')
-    p.append(f'    <name>\n      <text>{_esc(name)}</text>\n    </name>\n')
-
-    # --- questiontext (CDATA) ---
-    p.append('    <questiontext format="html">\n      <text><![CDATA[')
-    p.append(f'<p>{_esc_cdata(description)}</p>\n\n')
-    p.append(target_html)
-    p.append('<p><em>Edit the simulated circuit, the result will be read '
-             'when you click &quot;Check&quot;.</em></p>\n\n')
-    p.append('[[iframe height="640px" width="830px"]]\n')
-    p.append('<div style="font-family:sans-serif;">\n\n')
-    p.append('  <iframe id="sim-frame"\n')
-    p.append('    width="800" height="550" style="border:1px solid #ccc;">\n')
-    p.append('  </iframe>\n\n')
-    p.append('  <div id="readout" style="display:none; font-family:monospace; '
-             'padding:8px; font-size:14px;\n')
-    p.append('    background:#f4f4f4; border:1px solid #ddd; margin-top:4px;">\n')
-    p.append(readout_html + '\n')
-    p.append('    <div id="status" style="color:#999; margin-top:4px;">'
-             '(waiting for simulation...)</div>\n')
-    p.append('  </div>\n\n</div>\n\n')
-    p.append('[[script type="module"]]\n')
-    p.append(js_block + '\n')
-    p.append('[[/script]]\n[[/iframe]]\n\n')
-
-    # Input display divs
-    for i, m in graded:
-        iname = m.input_name(i)
-        p.append(f'<div{input_style}>\n')
-        p.append(f'  <p>{m.display_name()}: '
-                 f'[[input:{iname}]] {m.unit()} '
-                 f'[[validation:{iname}]]</p>\n')
-        p.append('</div>\n')
-    if has_integrity:
-        p.append('<div style="display:none;">\n')
-        p.append('  <p>[[input:ans_integrity]] '
-                 '[[validation:ans_integrity]]</p>\n')
-        p.append('</div>\n')
-    # Hidden input to preserve circuit state across Check submissions
-    p.append('<div style="display:none;">\n')
-    p.append('  <p>[[input:ans_circuit]] [[validation:ans_circuit]]</p>\n')
-    p.append('</div>\n')
-    p.append(']]></text>\n    </questiontext>\n')
-
-    # --- general feedback ---
-    p.append('    <generalfeedback format="html">\n')
-    p.append('      <text><![CDATA[')
-    for i, m in graded:
-        iname = m.input_name(i)
-        p.append(f'<p>{m.display_name()}: target = '
-                 f'{{@target_{iname}@}} {m.unit()} '
-                 f'(&plusmn; {{@tol_{iname}@}} {m.unit()}), '
-                 f'measured = {{@{iname}@}} {m.unit()}</p>\n')
-    p.append(']]></text>\n    </generalfeedback>\n')
-
-    # --- standard fields ---
-    p.append('    <defaultgrade>1</defaultgrade>\n')
-    p.append('    <penalty>0.1</penalty>\n')
-    p.append('    <hidden>0</hidden>\n')
-    p.append('    <idnumber/>\n')
-
-    # --- STACK fields (direct children of <question>, no <plugin> wrapper) ---
-    p.append('      <stackversion>\n        <text/>\n      </stackversion>\n')
-    p.append(f'      <questionvariables>\n        <text><![CDATA['
-             f'{qvars}\n]]></text>\n'
-             f'      </questionvariables>\n')
-
-    # specific feedback references all PRTs
-    fb_refs = ''.join(f'[[feedback:prt{j+1}]]' for j in range(n_graded))
-    p.append('      <specificfeedback format="html">\n'
-             f'        <text><![CDATA[{fb_refs}]]></text>\n'
-             '      </specificfeedback>\n')
-
-    # question note
-    note_parts = []
-    for i, m in graded:
-        iname = m.input_name(i)
-        note_parts.append(f'{m.display_name()}={{@target_{iname}@}}')
-    note_str = ', '.join(note_parts) if note_parts else 'no graded measurements'
-    p.append('      <questionnote format="html">\n'
-             f'        <text><![CDATA[{note_str}]]></text>\n'
-             '      </questionnote>\n')
-    p.append('      <questiondescription format="html">\n'
-             '        <text/>\n      </questiondescription>\n')
-
-    # boolean options
-    p.append('      <questionsimplify>1</questionsimplify>\n')
-    p.append('      <assumepositive>0</assumepositive>\n')
-    p.append('      <assumereal>0</assumereal>\n')
-    p.append('      <isbroken>0</isbroken>\n')
-
-    # PRT messages
-    p.append('      <prtcorrect format="html">\n'
-             '        <text><![CDATA[<span style="font-size: 1.5em; '
-             'color:green;"><i class="fa fa-check"></i></span> '
-             'Correct answer, well done.]]></text>\n'
-             '      </prtcorrect>\n')
-    p.append('      <prtpartiallycorrect format="html">\n'
-             '        <text><![CDATA[<span style="font-size: 1.5em; '
-             'color:orange;"><i class="fa fa-adjust"></i></span> '
-             'Your answer is partially correct.]]></text>\n'
-             '      </prtpartiallycorrect>\n')
-    p.append('      <prtincorrect format="html">\n'
-             '        <text><![CDATA[<span style="font-size: 1.5em; '
-             'color:red;"><i class="fa fa-times"></i></span> '
-             'Incorrect answer.]]></text>\n'
-             '      </prtincorrect>\n')
-
-    # display options
-    p.append('      <decimals>.</decimals>\n')
-    p.append('      <scientificnotation>*10</scientificnotation>\n')
-    p.append('      <multiplicationsign>dot</multiplicationsign>\n')
-    p.append('      <sqrtsign>1</sqrtsign>\n')
-    p.append('      <complexno>j</complexno>\n')
-    p.append('      <inversetrig>cos-1</inversetrig>\n')
-    p.append('      <logicsymbol>lang</logicsymbol>\n')
-    p.append('      <matrixparens>[</matrixparens>\n')
-    p.append('      <variantsselectionseed/>\n')
-
-    # --- inputs (one per graded measurement) ---
-    for i, m in graded:
-        iname = m.input_name(i)
-        p.append('      <input>\n')
-        p.append(f'        <name>{iname}</name>\n')
-        p.append('        <type>numerical</type>\n')
-        p.append(f'        <tans>target_{iname}</tans>\n')
-        p.append('        <boxsize>10</boxsize>\n')
-        p.append('        <strictsyntax>1</strictsyntax>\n')
-        p.append('        <insertstars>0</insertstars>\n')
-        p.append('        <syntaxhint/>\n')
-        p.append('        <syntaxattribute>0</syntaxattribute>\n')
-        p.append('        <forbidwords/>\n')
-        p.append('        <allowwords/>\n')
-        p.append('        <forbidfloat>0</forbidfloat>\n')
-        p.append('        <requirelowestterms>0</requirelowestterms>\n')
-        p.append('        <checkanswertype>0</checkanswertype>\n')
-        p.append(f'        <mustverify>{must_verify}</mustverify>\n')
-        p.append(f'        <showvalidation>{show_validation}</showvalidation>\n')
-        p.append('        <options/>\n')
-        p.append('      </input>\n')
-
-    # Integrity hidden input
-    if has_integrity:
-        p.append('      <input>\n')
-        p.append('        <name>ans_integrity</name>\n')
-        p.append('        <type>numerical</type>\n')
-        p.append('        <tans>expected_integrity</tans>\n')
-        p.append('        <boxsize>5</boxsize>\n')
-        p.append('        <strictsyntax>1</strictsyntax>\n')
-        p.append('        <insertstars>0</insertstars>\n')
-        p.append('        <syntaxhint/>\n')
-        p.append('        <syntaxattribute>0</syntaxattribute>\n')
-        p.append('        <forbidwords/>\n')
-        p.append('        <allowwords/>\n')
-        p.append('        <forbidfloat>0</forbidfloat>\n')
-        p.append('        <requirelowestterms>0</requirelowestterms>\n')
-        p.append('        <checkanswertype>0</checkanswertype>\n')
-        p.append('        <mustverify>0</mustverify>\n')
-        p.append('        <showvalidation>0</showvalidation>\n')
-        p.append('        <options/>\n')
-        p.append('      </input>\n')
-
-    # Circuit state hidden input (preserves edits across Check)
-    p.append('      <input>\n')
-    p.append('        <name>ans_circuit</name>\n')
-    p.append('        <type>string</type>\n')
-    p.append('        <tans>""</tans>\n')
-    p.append('        <boxsize>1</boxsize>\n')
-    p.append('        <strictsyntax>0</strictsyntax>\n')
-    p.append('        <insertstars>0</insertstars>\n')
-    p.append('        <syntaxhint/>\n')
-    p.append('        <syntaxattribute>0</syntaxattribute>\n')
-    p.append('        <forbidwords/>\n')
-    p.append('        <allowwords/>\n')
-    p.append('        <forbidfloat>0</forbidfloat>\n')
-    p.append('        <requirelowestterms>0</requirelowestterms>\n')
-    p.append('        <checkanswertype>0</checkanswertype>\n')
-    p.append('        <mustverify>0</mustverify>\n')
-    p.append('        <showvalidation>0</showvalidation>\n')
-    p.append('        <options/>\n')
-    p.append('      </input>\n')
-
-    # --- PRTs (one per graded measurement) ---
-    prt_weight = _fmt(1.0 / n_graded)
-    for j, (i, m) in enumerate(graded):
-        iname = m.input_name(i)
-        prt_name = f'prt{j + 1}'
-        value_node = '1' if has_integrity else '0'
-        p.append('      <prt>\n')
-        p.append(f'        <name>{prt_name}</name>\n')
-        p.append(f'        <value>{prt_weight}</value>\n')
-        p.append('        <autosimplify>1</autosimplify>\n')
-        p.append('        <feedbackstyle>1</feedbackstyle>\n')
-
-        # Feedback variables: for expression measurements, map display
-        # names of other measurements to their STACK inputs
-        if m.source_type == SOURCE_EXPRESSION:
-            fb_lines = []
-            for ii, mm in enumerate(measurements):
-                if mm.source_type != SOURCE_EXPRESSION:
-                    fb_lines.append(
-                        f'{mm.display_name()}: {mm.input_name(ii)};')
-            fb_lines.append(
-                f'computed_sans: {m.identifier};')
-            fb_text = ' '.join(fb_lines)
-            p.append('        <feedbackvariables>\n'
-                     f'          <text><![CDATA[{fb_text}]]></text>\n'
-                     '        </feedbackvariables>\n')
-        else:
-            p.append('        <feedbackvariables>\n          <text/>\n'
-                     '        </feedbackvariables>\n')
-
-        # Node 0: Integrity gate (only if integrity checking is active)
-        if has_integrity:
-            p.append('        <node>\n')
-            p.append('          <name>0</name>\n')
-            p.append('          <description>Integrity gate</description>\n')
-            p.append('          <answertest>AlgEquiv</answertest>\n')
-            p.append('          <sans>ans_integrity</sans>\n')
-            p.append('          <tans>expected_integrity</tans>\n')
-            p.append('          <testoptions/>\n')
-            p.append('          <quiet>1</quiet>\n')
-            # true: proceed to value check
-            p.append('          <truescoremode>=</truescoremode>\n')
-            p.append('          <truescore>0.0</truescore>\n')
-            p.append('          <truepenalty/>\n')
-            p.append('          <truenextnode>1</truenextnode>\n')
-            p.append(f'          <trueanswernote>'
-                     f'{prt_name}-0-T</trueanswernote>\n')
-            p.append('          <truefeedback format="html">\n')
-            p.append('            <text/>\n')
-            p.append('          </truefeedback>\n')
-            # false: zero marks, integrity failure message
-            p.append('          <falsescoremode>=</falsescoremode>\n')
-            p.append('          <falsescore>0.0</falsescore>\n')
-            p.append('          <falsepenalty/>\n')
-            p.append('          <falsenextnode>-1</falsenextnode>\n')
-            p.append(f'          <falseanswernote>'
-                     f'{prt_name}-0-F</falseanswernote>\n')
-            p.append('          <falsefeedback format="html">\n')
-            p.append('            <text><![CDATA[<p style="color:#c00;">'
-                     'One or more restricted circuit components were '
-                     'modified. Your answer cannot be graded.</p>]]>'
-                     '</text>\n')
-            p.append('          </falsefeedback>\n')
-            p.append('        </node>\n')
-
-        # Value check node
-        test_type = ('NumRelative' if m.tolerance_type == 'relative'
-                     else 'NumAbsolute')
-        sans_val = ('computed_sans'
-                    if m.source_type == SOURCE_EXPRESSION else iname)
-        p.append('        <node>\n')
-        p.append(f'          <name>{value_node}</name>\n')
-        p.append(f'          <description>Check {_esc(m.display_name())} '
-                 f'against target</description>\n')
-        p.append(f'          <answertest>{test_type}</answertest>\n')
-        p.append(f'          <sans>{sans_val}</sans>\n')
-        p.append(f'          <tans>target_{iname}</tans>\n')
-        p.append(f'          <testoptions>tol_{iname}</testoptions>\n')
-        p.append('          <quiet>0</quiet>\n')
-        # true branch
-        p.append('          <truescoremode>=</truescoremode>\n')
-        p.append('          <truescore>1.0</truescore>\n')
-        p.append('          <truepenalty/>\n')
-        p.append('          <truenextnode>-1</truenextnode>\n')
-        p.append(f'          <trueanswernote>'
-                 f'{prt_name}-{value_node}-T</trueanswernote>\n')
-        p.append('          <truefeedback format="html">\n')
-        p.append(f'            <text><![CDATA[<p>Correct! '
-                 f'{m.display_name()} = {{@{iname}@}} {m.unit()} is within '
-                 f'{{@tol_{iname}@}} {m.unit()} of the target '
-                 f'{{@target_{iname}@}} {m.unit()}.</p>]]></text>\n')
-        p.append('          </truefeedback>\n')
-        # false branch
-        p.append('          <falsescoremode>=</falsescoremode>\n')
-        p.append('          <falsescore>0.0</falsescore>\n')
-        p.append('          <falsepenalty/>\n')
-        p.append('          <falsenextnode>-1</falsenextnode>\n')
-        p.append(f'          <falseanswernote>'
-                 f'{prt_name}-{value_node}-F</falseanswernote>\n')
-        p.append('          <falsefeedback format="html">\n')
-        p.append(f'            <text><![CDATA[<p>Not quite. '
-                 f'{m.display_name()} = {{@{iname}@}} {m.unit()}, '
-                 f'but the target is {{@target_{iname}@}} {m.unit()} '
-                 f'(&plusmn; {{@tol_{iname}@}} {m.unit()}).</p>]]></text>\n')
-        p.append('          </falsefeedback>\n')
-        p.append('        </node>\n')
-        p.append('      </prt>\n')
-
-    # --- test cases ---
-    value_node = '1' if has_integrity else '0'
-
-    # Helper: add ans_circuit test input (empty string, not graded)
-    def _circuit_test_input():
-        return ('        <testinput>\n          <name>ans_circuit</name>\n'
-                '          <value>""\n</value>\n'
-                '        </testinput>\n')
-
-    # Test 1: all correct
-    p.append('      <qtest>\n')
-    p.append('        <testcase>1</testcase>\n')
-    p.append('        <description>All correct</description>\n')
-    for j, (i, m) in enumerate(graded):
-        iname = m.input_name(i)
-        p.append(f'        <testinput>\n          <name>{iname}</name>\n'
-                 f'          <value>target_{iname}</value>\n'
-                 f'        </testinput>\n')
-    if has_integrity:
-        p.append('        <testinput>\n          <name>ans_integrity</name>\n'
-                 '          <value>1</value>\n'
-                 '        </testinput>\n')
-    p.append(_circuit_test_input())
-    for j in range(n_graded):
-        prt_name = f'prt{j + 1}'
-        p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
-                 f'          <expectedscore>1.0000000</expectedscore>\n'
-                 f'          <expectedpenalty>0.0000000</expectedpenalty>\n'
-                 f'          <expectedanswernote>'
-                 f'{prt_name}-{value_node}-T</expectedanswernote>\n'
-                 f'        </expected>\n')
-    p.append('      </qtest>\n')
-
-    # Test 2: all wrong (values wrong, integrity ok)
-    p.append('      <qtest>\n')
-    p.append('        <testcase>2</testcase>\n')
-    p.append('        <description>All wrong</description>\n')
-    for j, (i, m) in enumerate(graded):
-        iname = m.input_name(i)
-        p.append(f'        <testinput>\n          <name>{iname}</name>\n'
-                 f'          <value>target_{iname} + tol_{iname} + 1</value>\n'
-                 f'        </testinput>\n')
-    if has_integrity:
-        p.append('        <testinput>\n          <name>ans_integrity</name>\n'
-                 '          <value>1</value>\n'
-                 '        </testinput>\n')
-    p.append(_circuit_test_input())
-    for j in range(n_graded):
-        prt_name = f'prt{j + 1}'
-        p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
-                 f'          <expectedscore>0.0000000</expectedscore>\n'
-                 f'          <expectedpenalty>0.1000000</expectedpenalty>\n'
-                 f'          <expectedanswernote>'
-                 f'{prt_name}-{value_node}-F</expectedanswernote>\n'
-                 f'        </expected>\n')
-    p.append('      </qtest>\n')
-
-    # Test 3: integrity failure (values correct but integrity=0)
-    if has_integrity:
-        p.append('      <qtest>\n')
-        p.append('        <testcase>3</testcase>\n')
-        p.append('        <description>Integrity failure</description>\n')
-        for j, (i, m) in enumerate(graded):
-            iname = m.input_name(i)
-            p.append(f'        <testinput>\n          <name>{iname}</name>\n'
-                     f'          <value>target_{iname}</value>\n'
-                     f'        </testinput>\n')
-        p.append('        <testinput>\n          <name>ans_integrity</name>\n'
-                 '          <value>0</value>\n'
-                 '        </testinput>\n')
-        p.append(_circuit_test_input())
-        for j in range(n_graded):
-            prt_name = f'prt{j + 1}'
-            p.append(f'        <expected>\n          <name>{prt_name}</name>\n'
-                     f'          <expectedscore>0.0000000</expectedscore>\n'
-                     f'          <expectedpenalty>0.1000000</expectedpenalty>\n'
-                     f'          <expectedanswernote>'
-                     f'{prt_name}-0-F</expectedanswernote>\n'
-                     f'        </expected>\n')
-        p.append('      </qtest>\n')
-
-    # tags
-    p.append('    <tags>\n      <tag>\n        <text>circuitjs</text>\n'
-             '      </tag>\n    </tags>\n')
-
-    p.append('  </question>\n</quiz>\n')
-
-    return ''.join(p)
 
 
 # ---------------------------------------------------------------------------
@@ -2383,23 +1746,53 @@ class MainWindow(QMainWindow):
         editable_indices = sorted(self._get_editable_indices())
         removable_indices = sorted(self._get_removable_indices())
         type_rules = self._get_type_rules()
-        return generate_xml(
-            name=self.name_edit.text().strip()
-                 or 'Untitled CircuitJS1 Question',
-            description=(self.desc_edit.toPlainText().strip()
-                         or 'Adjust the circuit as instructed.'),
-            ctz=self._get_ctz(),
-            measurements=measurements,
-            editable_indices=editable_indices,
-            removable_indices=removable_indices,
-            type_rules=type_rules,
-            white_bg=False,
-            rate=RATE_DEFAULT,
-            hide_input=True,
-            base_url=SIM_BASE_URL,
-            category=self.category_edit.text().strip(),
-            custom_qvars=self._get_qvars_text(),
-        )
+
+        # Build measurement dicts for falstad compiler
+        meas_dicts = []
+        for m in measurements:
+            md = {
+                'source': m.source_type,
+                'identifier': m.identifier,
+                'property': m.property,
+                'target': m.target,
+                'tolerance': m.tolerance,
+                'graded': m.graded,
+                'tolerance_type': m.tolerance_type,
+                'element_index': m.element_index,
+            }
+            if m.target_expr:
+                md['target_expr'] = m.target_expr
+            meas_dicts.append(md)
+
+        # Build falstad YAML dict
+        yaml_dict = {
+            'name': (self.name_edit.text().strip()
+                     or 'Untitled CircuitJS1 Question'),
+            'description': self.desc_edit.toPlainText().strip(),
+            'ctz': self._get_ctz(),
+            'category': self.category_edit.text().strip(),
+            'measurements': meas_dicts,
+            'rate': RATE_DEFAULT,
+            'white_bg': False,
+            'tags': ['circuitjs'],
+        }
+
+        # Add question variables from Variable rows
+        qvars = self._get_qvars_text()
+        if qvars:
+            yaml_dict['question_variables'] = qvars
+
+        # Add integrity if any permissions are set
+        if editable_indices or removable_indices or type_rules:
+            yaml_dict['integrity'] = {
+                'editable_indices': editable_indices,
+                'removable_indices': removable_indices,
+                'type_rules': type_rules,
+            }
+
+        # Compile through both stages
+        stack_dict = falstad_compile(yaml_dict)
+        return compile_question(stack_dict)
 
     def _validate(self):
         warnings = []
